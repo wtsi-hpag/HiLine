@@ -27,6 +27,7 @@ from functools import update_wrapper
 from os import makedirs
 from os.path import isfile, join, basename, normpath
 from subprocess import Popen, PIPE, CalledProcessError, check_output, STDOUT
+from sys import platform
 from threading import Thread
 
 import click
@@ -705,7 +706,7 @@ class Pipeline(object):
                 @property
                 def cat(self):
                     if self.gz(path=self.path):
-                        cat = "zcat"
+                        cat = "zcat" if "linux" in platform else "gzcat"
                     elif self.bz2(path=self.path):
                         cat = "bzcat"
                     else:
