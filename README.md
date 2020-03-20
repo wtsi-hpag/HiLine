@@ -34,7 +34,7 @@ help(Pipeline)
 
 ```bash
 python setup.py install
-pytest
+py.test --pyargs HiLine
 ```
 
 # Third-Party Acknowledgements
