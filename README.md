@@ -20,7 +20,9 @@ help(Pipeline)
 
 # Requirments, Installing
 * [Python](https://www.python.org/) version 3.8 or later
+* [Pip](https://pypi.org/project/pip/)
 * [Setuptools](https://setuptools.readthedocs.io/en/latest/)
+* [NumPy](https://numpy.org/) version 1.18.1 or later
 * C/C++ compiler (tested with [Clang](https://clang.llvm.org/) version 9 and [GCC](https://gcc.gnu.org/) version 7.3)<br/>
 * [Git](https://git-scm.com/)
 * [Ninja](https://ninja-build.org/)
@@ -33,7 +35,8 @@ help(Pipeline)
 * [pytest](https://docs.pytest.org/en/latest/) (for testing only)
 
 ```bash
-python setup.py install
+cd HiLine
+pip install .
 pytest
 ```
 
