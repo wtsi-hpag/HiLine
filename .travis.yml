@@ -1,0 +1,18 @@
+language: python
+before_install:
+  - sudo apt-get -y install build-essential 
+  - sudo apt-get -y install clang-9
+  - sudo apt-get -y install ninja-build
+  - sudo apt-get -y install cmake
+  - sudo apt-get -y install libboost-all-dev
+  - sudo apt-get -y install ragel
+  - sudo apt-get -y install libpcre3-dev
+python:
+  - "3.8"
+  - "nightly"
+install:
+  - pip -vvv install pytest
+  - pip -vvv install numpy
+  - pip -vvv install .
+script:
+  - pytest
