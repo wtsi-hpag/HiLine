@@ -1,3 +1,4 @@
+[![Travis CI](https://travis-ci.org/wtsi-hpag/HiLine.svg?branch=master)](https://travis-ci.org/github/wtsi-hpag/HiLine)
 # HiLine
 HiC alignment and classification pipeline.
 
