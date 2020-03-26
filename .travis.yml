@@ -10,10 +10,10 @@ install:
   - source "$HOME/miniconda/etc/profile.d/conda.sh"
   - hash -r
   - conda config --set always_yes yes --set changeps1 no
-  - conda update conda
+  - conda update -q conda
   - conda info -a
-  - conda create -n test-environment -c conda-forge -c bioconda -y python=$TRAVIS_PYTHON_VERSION clang gxx_linux-64 pip numpy=1.18 samtools=1.10 bwa
+  - conda create -q -n test-environment -c conda-forge -c bioconda -y python=$TRAVIS_PYTHON_VERSION clang gxx_linux-64 pip numpy=1.18 samtools=1.10 bwa ninja cmake boost pcre pkgconfig pytest ragel
   - conda activate test-environment
-  - pip -vvv install .
+  - pip install .
 script:
   - pytest
