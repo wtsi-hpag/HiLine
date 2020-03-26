@@ -8,9 +8,11 @@ before_install:
   - sudo apt-get -y install libboost-all-dev
   - sudo apt-get -y install ragel
   - sudo apt-get -y install libpcre3-dev
+  - sudo apt-get -y install samtools
+  - sudo apt-get -y install bwa
 python:
-  - "3.8"
-  - "nightly"
+  - "3.8.2"
+  - "3.9-dev"
 install:
   - pip -vvv install pytest
   - pip -vvv install numpy
