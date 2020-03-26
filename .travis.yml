@@ -1,3 +1,4 @@
+dist: bionic
 language: python
 before_install:
   - sudo apt-get -y install build-essential 
