@@ -1,4 +1,6 @@
 [![Travis CI](https://travis-ci.org/wtsi-hpag/HiLine.svg?branch=master)](https://travis-ci.org/github/wtsi-hpag/HiLine)
+[![Anaconda-Server Badge](https://anaconda.org/bioconda/hiline/badges/installer/conda.svg)](https://conda.anaconda.org/bioconda)
+[![Anaconda-Server Badge](https://anaconda.org/bioconda/hiline/badges/downloads.svg)](https://anaconda.org/bioconda/hiline)
 # HiLine
 HiC alignment and classification pipeline.
 
