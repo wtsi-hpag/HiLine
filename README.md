@@ -4,6 +4,13 @@
 # HiLine
 HiC alignment and classification pipeline.
 
+# Bioconda
+HiLine is available on [bioconda](https://bioconda.github.io/)
+
+```bash
+conda install hiline
+```
+
 # As a Command Line Program
 ```bash
 HiLine --help
