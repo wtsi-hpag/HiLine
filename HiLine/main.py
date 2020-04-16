@@ -2038,7 +2038,7 @@ class Pipeline(object):
                         + (["de"] * len(self.danglingEnd))
                         + (["ss"] * len(self.sameFragAndStrand))
                         + (["rl"] * len(self.reLigation)),
-                        "valid_pairs": (
+                        "valid": (
                             [True]
                             * (
                                 len(self.FF)
@@ -2661,6 +2661,16 @@ class Pipeline(object):
             def log(msg):
                 self.logger.info("(stats) {msg}".format(msg=msg))
 
+            def zero_bandwidth_wrapper(func, *args, **kwargs):
+                try:
+                    return func(*args, **kwargs)
+                except RuntimeError as rte:
+                    if str(rte).startswith("Selected KDE bandwidth is 0"):
+                        kwargs["kde_kws"] = {"bw": 0.1}
+                        return func(*args, **kwargs)
+                    else:
+                        raise rte
+
             def process_basic_stats(df, dir, name, x="counts", y1="type", y2="class"):
                 if generate_csvs:
                     df.to_csv(
@@ -2689,17 +2699,13 @@ class Pipeline(object):
                     figure, axes = plt.subplots(2, 1)
 
                     df_sub = df[df.type == "raw count"]
-                    sns.catplot(data=df_sub, y="statistic", x="count", ax=axes[0])
-                    sns.catplot(
-                        data=df_sub, y="statistic", x="count", ax=axes[0], kind="violin"
-                    )
+                    sns.stripplot(data=df_sub, y="statistic", x="count", ax=axes[0])
+                    sns.violinplot(data=df_sub, y="statistic", x="count", ax=axes[0])
                     axes[0].get_yaxis().label.set_visible(False)
 
                     df_sub = df[df.type == "norm count"]
-                    sns.catplot(data=df_sub, y="statistic", x="count", ax=axes[1])
-                    sns.catplot(
-                        data=df_sub, y="statistic", x="count", ax=axes[1], kind="violin"
-                    )
+                    sns.stripplot(data=df_sub, y="statistic", x="count", ax=axes[1])
+                    sns.violinplot(data=df_sub, y="statistic", x="count", ax=axes[1])
                     pad = 0.1 * df_sub["count"].max()
                     axes[1].set_xlim(
                         df_sub["count"].min() - pad, df_sub["count"].max() + pad
@@ -2760,7 +2766,9 @@ class Pipeline(object):
                 if generate_figs:
                     figure, axes = plt.subplots(2, 2)
                     for ax, id in zip(axes.flat, fr_classes + other_classes):
-                        sns.distplot(df[df["class"] == id].dis, ax=ax)
+                        zero_bandwidth_wrapper(
+                            sns.distplot, df[df["class"] == id].dis, ax=ax
+                        )
                         ax.set_xlabel("bp from site")
                         ax.set_title(id)
 
@@ -2775,7 +2783,9 @@ class Pipeline(object):
 
                     figure, axes = plt.subplots(1, 2)
                     for ax, id in zip(axes.flat, ("F", "R")):
-                        sns.distplot(df[df["dir"] == id].dis, ax=ax)
+                        zero_bandwidth_wrapper(
+                            sns.distplot, df[df["dir"] == id].dis, ax=ax
+                        )
                         ax.set_xlabel("bp from site")
                         ax.set_title(id)
 
@@ -2791,7 +2801,9 @@ class Pipeline(object):
                     df_sub = df[np.array([c in fr_classes for c in df["class"]])].pivot(
                         "id", "dir", "dis"
                     )
-                    figure = sns.jointplot(data=df_sub, x="F", y="R", kind="hex").fig
+                    figure = zero_bandwidth_wrapper(
+                        sns.jointplot, data=df_sub, x="F", y="R", kind="hex"
+                    ).fig
                     figure.axes[0].set_xlabel("F, bp from site")
                     figure.axes[0].set_ylabel("R, bp from site")
 
@@ -3006,13 +3018,8 @@ class Pipeline(object):
                                     if generate_figs:
                                         figure, axes = plt.subplots(2, 1)
 
-                                        sns.catplot(data=df, x="index", ax=axes[0])
-                                        sns.catplot(
-                                            data=df,
-                                            x="index",
-                                            ax=axes[0],
-                                            kind="violin",
-                                        )
+                                        sns.stripplot(data=df, x="index", ax=axes[0])
+                                        sns.violinplot(data=df, x="index", ax=axes[0])
                                         axes[0].get_yaxis().label.set_visible(False)
                                         axes[0].set_xlabel("inter sequence index")
 
@@ -3128,8 +3135,8 @@ class Pipeline(object):
                                             df=df_cache_4[df_cache_4.valid == False],
                                             dir=dir_cache_6,
                                             name=dir_cache_4.path_name,
-                                            fr_classes=("SC", "DE"),
-                                            other_classes=("SFS", "RL"),
+                                            fr_classes=("sc", "de"),
+                                            other_classes=("sfs", "rl"),
                                         )
 
                                     fig_pool.apply_async(thread_fn_6)
