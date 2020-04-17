@@ -1,19 +1,30 @@
 dist: bionic
 language: python
 before_install:
-  - sudo apt-get update
+- sudo apt-get update
 python:
-  - "3.8"
+- '3.8'
 install:
-  - wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
-  - bash miniconda.sh -b -p $HOME/miniconda
-  - source "$HOME/miniconda/etc/profile.d/conda.sh"
-  - hash -r
-  - conda config --set always_yes yes --set changeps1 no
-  - conda update -q conda
-  - conda info -a
-  - conda create -q -n test-environment -c conda-forge -c bioconda -y python=$TRAVIS_PYTHON_VERSION clang gxx_linux-64 pip numpy=1.18 samtools=1.10 bwa ninja cmake boost pcre pkgconfig pytest ragel
-  - conda activate test-environment
-  - pip install .
+- wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
+- bash miniconda.sh -b -p $HOME/miniconda
+- source "$HOME/miniconda/etc/profile.d/conda.sh"
+- hash -r
+- conda config --set always_yes yes --set changeps1 no
+- conda update -q conda
+- conda info -a
+- conda create -q -n test-environment -c conda-forge -c bioconda -y python=$TRAVIS_PYTHON_VERSION
+  clang gxx_linux-64 pip numpy=1.18 samtools=1.10 bwa ninja cmake boost pcre pkgconfig
+  pytest ragel
+- conda activate test-environment
+- pip install .
 script:
-  - pytest
+- pytest
+before_deploy:
+- export TRAVIS_TAG=${TRAVIS_TAG:-$(date +'%Y%m%d%H%M%S')-$(git log --format=%h -1)}
+- git tag $TRAVIS_TAG
+deploy:
+  edge: true
+  provider: releases
+  token: MiBso4i/Zz8Y1C9o6odzG88p9tCxQkc8USpbbeIMnB9YzFHjHoXmHr+94tCo7e4rgZ4OobtXHNAF0sK/LXkfktPunJOuEzQ/Jd1d3Z4+AsCHtSFx5O8n0xAaJRayTzeWSklDzdiC/dpIjrim/RPLhRhD9NJrZbQPhfS9oRaDCL6VeIAgQJMBvOPyK3rsBIf72pVGZw4DVM9ZfnmyxL1RCgElx+sk4J7lE9JXbBB+8aDSNOB3XNcnYZOzxSzWnoTMZ6Hk+phJGbZt7FqualIgjb/4Bo87Ogfh9JP06+by9QzwHMGTdLgUL4vaVpxcI6loOYmbZIBFh+UxVzEnqQoRIP1TXxjFR78Q9SF4R01kTDWlZPngRHpSihFYC0yATbR5QodygoLw1rxM6FNd4oSeIv2M233lssoP6z6iK+ZD0ZXGErs45Rbwtb9qtXw8HeRuhOYdj79m75vZcafMHnSop+uX8M71zax2eyE+k0Uf3FqVykzsiB6uNtQLA1Cm8iVMQafQEWRC/r20wVlpUCE0TVHobxWpX5k2/UJTDEixM187DXtxUzfduompszUzFo9hfZahHW8F/x3dgoTvqwZ48qoDfBh16Pp2s1/+0lkcQ2smAG8xfurFzSzvIeuXoiM8eXiuBUQSRcWFove0gLqg80hymVigTvQ/KY0L1viv6vw=
+  prerelease: true
+  draft: true
