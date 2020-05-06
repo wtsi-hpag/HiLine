@@ -37,7 +37,7 @@ from Bio.Restriction import AllEnzymes, RestrictionBatch
 from _HiLine import _HiLine_Main
 
 NAME = "HiLine"
-VERSION = "0.0.1"
+VERSION = "0.0.4"
 DESCRIPTION = "A HiC alignment and classification pipeline."
 LICENCE = "Copyright (c) 2020 Ed Harry, Wellcome Sanger Institute."
 
