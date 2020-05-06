@@ -1620,7 +1620,7 @@ HiLine_Main(PyObject *self, PyObject *args, PyObject *kwargs)
 					char nameBuffer[128];
 					u32 nameBufferPtr = 0;
 
-					enum enumMode {modeName, modeSeq};
+					enum enumMode {modeName, modeComment, modeSeq};
 					enumMode mode = modeSeq;
 
 					do
@@ -1645,7 +1645,7 @@ HiLine_Main(PyObject *self, PyObject *args, PyObject *kwargs)
 								goto EndFastaRead;
 							}
 
-							if (mode == modeName)
+							if (mode == modeName || mode == modeComment)
 							{
 								if (character == '\n')
 								{
@@ -1709,7 +1709,9 @@ HiLine_Main(PyObject *self, PyObject *args, PyObject *kwargs)
 									continue;
 								}
 
-								if (character < 33) continue;
+								if (character < 33) mode = modeComment;
+
+								if (mode == modeComment) continue;
 
 								if (nameBufferPtr == sizeof(nameBuffer))
 								{
