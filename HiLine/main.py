@@ -37,7 +37,7 @@ from Bio.Restriction import AllEnzymes, RestrictionBatch
 from _HiLine import _HiLine_Main
 
 NAME = "HiLine"
-VERSION = "0.0.4"
+VERSION = "0.0.5"
 DESCRIPTION = "A HiC alignment and classification pipeline."
 LICENCE = "Copyright (c) 2020 Ed Harry, Wellcome Sanger Institute."
 
@@ -1034,15 +1034,17 @@ class Pipeline(object):
 
                     def sam_pg_rg_capture():
                         global headermode
+                        seenHeader = False
                         with os.fdopen(pg_rg_capture_write, "wb") as f_out:
                             for line in sam_pg_rg_capture_input:
                                 if headermode:
                                     if b"@" in line:
+                                        seenHeader = True
                                         if b"@PG" in line:
                                             pg_lines.append(line)
                                         elif b"@RG" in line:
                                             rg_lines.append(line)
-                                    else:
+                                    elif seenHeader:
                                         headermode = False
 
                                 f_out.write(line)
@@ -1080,17 +1082,19 @@ class Pipeline(object):
                     def sam_pg_rg_append():
                         global headermode
                         local_header_mode = True
+                        seenHeader = False
                         header_buffer = []
                         local_pg_lines = []
                         with os.fdopen(pg_rg_append_write, "wb") as f_out:
                             for line in sam_pg_rg_append_input:
                                 if local_header_mode:
                                     if b"@" in line:
+                                        seenHeader = True
                                         if b"@PG" in line:
                                             local_pg_lines.append(line)
                                         else:
                                             header_buffer.append(line)
-                                    else:
+                                    elif seenHeader:
                                         while headermode:
                                             pass
                                         local_header_mode = False
@@ -1121,6 +1125,8 @@ class Pipeline(object):
                                             f_out.write(rgLine)
 
                                         f_out.write(line)
+                                    else:
+                                        header_buffer.append(line)
                                 else:
                                     f_out.write(line)
 
