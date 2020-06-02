@@ -150,3 +150,10 @@ def test_hiline(tmpdir):
     assert len(test_stat_files) == len(stat_files)
     for file in test_stat_files:
         assert file in stat_files
+
+
+if __name__ == "__main__":
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_hiline(tmpdir)

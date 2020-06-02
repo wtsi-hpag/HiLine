@@ -1431,7 +1431,9 @@ HiLine_Main(PyObject *self, PyObject *args, PyObject *kwargs)
 		ForLoop(ArrayCount(params))
 		{
 			inputParam *param = params + index;
-			*(param->obj) = PyObject_GetAttr(objParams, Py_BuildValue("s", param->name));
+			PyObject *objName = Py_BuildValue("s", param->name);
+			*(param->obj) = PyObject_GetAttr(objParams, objName);
+			Py_DECREF(objName);
 			if (!(*(param->obj)))
 			{
 				PrintError("No param attribute \'%s\' found", param->name);
@@ -1439,7 +1441,7 @@ HiLine_Main(PyObject *self, PyObject *args, PyObject *kwargs)
 			}
 		}
 
-		Py_DECREF(objParams);
+		//Py_DECREF(objParams);
 	}
 
 	Name = (char *)PyUnicode_1BYTE_DATA(objPName);
@@ -1511,11 +1513,12 @@ HiLine_Main(PyObject *self, PyObject *args, PyObject *kwargs)
 
 	{
 		u32 longestLen = 0;
+		PyObject *objLocName = Py_BuildValue("s", "loc");
 		ForLoop((Restriction_Sites->num - 2))
 		{
 			PyObject *objRestrictionSite = PySequence_Fast_GET_ITEM(objRestrictionSites_fast, (Py_ssize_t)index);
 
-			PyObject *objLoc = PyObject_GetAttr(objRestrictionSite, Py_BuildValue("s", "loc"));
+			PyObject *objLoc = PyObject_GetAttr(objRestrictionSite, objLocName);
 			if (!objLoc)
 			{
 				PyErr_SetString(PyExc_Exception, "No restrictionSite attribute \'loc\' found");
@@ -1577,6 +1580,7 @@ HiLine_Main(PyObject *self, PyObject *args, PyObject *kwargs)
 				return(0);
 			}
 		}
+		Py_DECREF(objLocName);
 
 		Restriction_Sites->sites[Restriction_Sites->num - 2].pattern = "[ATGC]N";
 		Restriction_Sites->sites[Restriction_Sites->num - 2].restrictionLocation = 1;
