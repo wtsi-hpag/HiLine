@@ -22,6 +22,8 @@ SOFTWARE.
 
 #define PY_SSIZE_T_CLEAN
 #define NPY_NO_DEPRECATED_API NPY_1_8_API_VERSION
+#define __STDC_FORMAT_MACROS 1
+#include <inttypes.h>
 #include <Python.h>
 #include "numpy/arrayobject.h"
 
@@ -627,13 +629,13 @@ CreatePGLineAndTags(sam_buffer *buffer, u08 *lastPGId, s32 handle)
 	buffer->sam[index++] = ':';
 	
 	char numBuff[16];
-	stbsp_snprintf(numBuff, sizeof(numBuff), "%d", Min_Map_Quality);
+	stbsp_snprintf(numBuff, sizeof(numBuff), "%u", Min_Map_Quality);
 
 	namePtr = (u08 *)numBuff;
 	while (*namePtr) buffer->sam[index++] = *(namePtr++);
 	buffer->sam[index++] = '\t';
 
-	ForLoop2(Restriction_Sites->num)
+	ForLoop2((Restriction_Sites->num - 2))
 	{
 		buffer->sam[index++] = 'r';
 		buffer->sam[index++] = 's';
@@ -642,7 +644,7 @@ CreatePGLineAndTags(sam_buffer *buffer, u08 *lastPGId, s32 handle)
 		namePtr = (u08 *)Restriction_Sites->sites[index2].pattern;
 		while (*namePtr) buffer->sam[index++] = *(namePtr++);
 
-		stbsp_snprintf(numBuff, sizeof(numBuff), "%d", Restriction_Sites->sites[index2].restrictionLocation);
+		stbsp_snprintf(numBuff, sizeof(numBuff), "%u", Restriction_Sites->sites[index2].restrictionLocation);
 
 		buffer->sam[index++] = ',';
 		namePtr = (u08 *)numBuff;
@@ -1504,12 +1506,12 @@ HiLine_Main(PyObject *self, PyObject *args, PyObject *kwargs)
 	TestForPythonError;
 	Py_DECREF(objRestrictionSites);
 
-	Restriction_Sites->num = (u32)PySequence_Fast_GET_SIZE(objRestrictionSites_fast);
+	Restriction_Sites->num = (u32)PySequence_Fast_GET_SIZE(objRestrictionSites_fast) + 2;
 	Restriction_Sites->sites = PushArray(Working_Set, restriction_site, Restriction_Sites->num);
 
 	{
 		u32 longestLen = 0;
-		ForLoop(Restriction_Sites->num)
+		ForLoop((Restriction_Sites->num - 2))
 		{
 			PyObject *objRestrictionSite = PySequence_Fast_GET_ITEM(objRestrictionSites_fast, (Py_ssize_t)index);
 
@@ -1562,7 +1564,7 @@ HiLine_Main(PyObject *self, PyObject *args, PyObject *kwargs)
 
 			if (len < Restriction_Sites->sites[index].restrictionLocation)
 			{
-				PrintError("Restriction site \'%s\' of length %d cannot restriction at site %d", Restriction_Sites->sites[index].pattern, len, Restriction_Sites->sites[index].restrictionLocation);
+				PrintError("Restriction site \'%s\' of length %u cannot cut at site %u", Restriction_Sites->sites[index].pattern, len, Restriction_Sites->sites[index].restrictionLocation);
 				exitCode = EXIT_FAILURE;
 				return(0);
 			}
@@ -1576,8 +1578,19 @@ HiLine_Main(PyObject *self, PyObject *args, PyObject *kwargs)
 			}
 		}
 
+		Restriction_Sites->sites[Restriction_Sites->num - 2].pattern = "[ATGC]N";
+		Restriction_Sites->sites[Restriction_Sites->num - 2].restrictionLocation = 1;
+		Restriction_Sites->sites[Restriction_Sites->num - 1].pattern = "N[ATGC]";
+		Restriction_Sites->sites[Restriction_Sites->num - 1].restrictionLocation = 1;
+
+		if (!CompileRestrictionSiteRegex(Restriction_Sites->sites + Restriction_Sites->num - 2) || !CompileRestrictionSiteRegex(Restriction_Sites->sites + Restriction_Sites->num - 1))
+		{
+			exitCode = EXIT_FAILURE;
+			return(0);
+		}
+
 		Py_DECREF(objRestrictionSites_fast);
-		Restriction_Sites->longestLen = longestLen;
+		Restriction_Sites->longestLen = Max(longestLen, 1);
 	}
 
 	Min_Map_Quality = (u32)PyLong_AsUnsignedLong(objMinMapQ);
@@ -1855,16 +1868,16 @@ EndFastaRead:
 
 							//tagLength += (u32)stbsp_snprintf(((char *)tagBuffer) + tagLength, sizeof(tagBuffer) - tagLength - 1, "%d", (u32)((treeId >> 32) & 0xffffffff));
 							//tagBuffer[tagLength++] = ',';
-							tagLength += (u32)stbsp_snprintf(((char *)tagBuffer) + tagLength, sizeof(tagBuffer) - tagLength - 1, "%d", (u32)(treeId++ & 0xffffffff));
+							tagLength += (u32)stbsp_snprintf(((char *)tagBuffer) + tagLength, sizeof(tagBuffer) - tagLength - 1, "%u", (u32)(treeId++ & 0xffffffff));
 							tagBuffer[tagLength++] = ',';
 							//tagLength += (u32)stbsp_snprintf(((char *)tagBuffer) + tagLength, sizeof(tagBuffer) - tagLength - 1, "%d", (u32)((fragment->value >> 32) & 0xffffffff));
 							//tagBuffer[tagLength++] = ',';
-							tagLength += (u32)stbsp_snprintf(((char *)tagBuffer) + tagLength, sizeof(tagBuffer) - tagLength - 1, "%d", (u32)(fragment->value & 0xffffffff));
+							tagLength += (u32)stbsp_snprintf(((char *)tagBuffer) + tagLength, sizeof(tagBuffer) - tagLength - 1, "%u", (u32)(fragment->value & 0xffffffff));
 							tagBuffer[tagLength++] = ',';
 							u64 upstreamFragmentDistance = fragment->next ? fragment->next->value : node->length;
 							//tagLength += (u32)stbsp_snprintf(((char *)tagBuffer) + tagLength, sizeof(tagBuffer) - tagLength - 1, "%d", (u32)((upstreamFragmentDistance >> 32) & 0xffffffff));
 							//tagBuffer[tagLength++] = ',';
-							tagLength += (u32)stbsp_snprintf(((char *)tagBuffer) + tagLength, sizeof(tagBuffer) - tagLength - 1, "%d", (u32)(upstreamFragmentDistance & 0xffffffff));
+							tagLength += (u32)stbsp_snprintf(((char *)tagBuffer) + tagLength, sizeof(tagBuffer) - tagLength - 1, "%u", (u32)(upstreamFragmentDistance & 0xffffffff));
 
 							fragment->tag = PushArray(Working_Set, u08, tagLength);
 							ForLoop(tagLength)
@@ -1875,14 +1888,16 @@ EndFastaRead:
 						}
 					}
 
-					PrintStatus("%d sequences scanned for restriction sites, %$.2f sites/sequence, %$.2f BP/site",
+					PrintStatus("%u sequences scanned for restriction sites, %$.2f sites/sequence, %$.2f BP/site",
 							numSequences, (f64)totalRestrictionSites / (f64)numSequences, (f64)totalBP / (f64)totalRestrictionSites);
 				}
 
 				{
 
 					ThreadPoolDestroy(Thread_Pool);
-					Thread_Pool = ThreadPoolInit(&Working_Set, nThreads - 2);
+					u32 nWorkerThreads = nThreads - 2;
+					if (nWorkerThreads > 2) nWorkerThreads = 2;
+					Thread_Pool = ThreadPoolInit(&Working_Set, nWorkerThreads);
 
 					thread_pool *processPool = ThreadPoolInit(&Working_Set, 2);
 
@@ -1933,6 +1948,9 @@ EndFastaRead:
 					u32 doneHeader = 0;
 					u64 totalRead = 0;
 
+					char printNBuffers[2][16] = {{0}};
+					u08 printNBufferPtr = 0;
+					
 					PrintStatus("Reading from \'%s\'...", samPath);
 					do
 					{
@@ -1960,7 +1978,7 @@ EndFastaRead:
 
 							if (bufferPtr == SAM_Buffer_Size)
 							{
-								PrintError("Buffer error, a SAM record is larger than %d bytes", SAM_Buffer_Size);
+								PrintError("Buffer error, a SAM record is larger than %lu bytes", SAM_Buffer_Size);
 								exitCode = EXIT_FAILURE;
 								goto EndSamRead;
 							}
@@ -1996,7 +2014,16 @@ EndFastaRead:
 #define Log2_Print_Interval 14
 								if (!(++totalRead & ((1 << Log2_Print_Interval) - 1)))
 								{
-									PrintStatus("%$d SAM lines processed", totalRead);
+									u08 currPtr = printNBufferPtr;
+									u08 otherPtr = (currPtr + 1) & 1;
+									stbsp_snprintf(printNBuffers[currPtr], sizeof(printNBuffers[currPtr]), "%$" PRIu64, totalRead);
+
+									if (strcmp(printNBuffers[currPtr], printNBuffers[otherPtr]))
+									{
+										PrintStatus("%s SAM lines processed", printNBuffers[currPtr]);
+									}
+									
+									printNBufferPtr = otherPtr;
 								}
 
 								buffer = 0;
@@ -2023,30 +2050,31 @@ EndSamRead:
 				if (exitCode == EXIT_SUCCESS)
 				{
 					PrintStatus("");
-					PrintStatus("%$d/%$d SAM header/record lines read", Stats->inputHeaderLines, Stats->inputSAMLines);
-					PrintStatus("%$d good reads", Stats->goodRead);
-					PrintStatus("%$d unpaired reads", Stats->unPaired);
-					PrintStatus("%$d supplementary reads", Stats->supplementary);
-					PrintStatus("%$d duplicate reads", Stats->duplicate);
-					PrintStatus("%$d qc-failing reads", Stats->qcFail);
-					PrintStatus("%$d secondary reads", Stats->secondary);
-					PrintStatus("%$d unmapped reads", Stats->unMapped);
-					PrintStatus("%$d reads below minimum mapping quality (%d)", Stats->belowMinMapq, Min_Map_Quality);
-					PrintStatus("%$d reads too far from a restriction site", Stats->tooFarFromRestrictionSite);
-					PrintStatus("%$d reads with an invalid reference name", Stats->invalidReferenceName);
+					PrintStatus("%$" PRIu64 "/%$" PRIu64 " SAM header/record lines read", Stats->inputHeaderLines, Stats->inputSAMLines);
+					PrintStatus("%$" PRIu64 " good reads", Stats->goodRead);
+					PrintStatus("%$" PRIu64 " unpaired reads", Stats->unPaired);
+					PrintStatus("%$" PRIu64 " supplementary reads", Stats->supplementary);
+					PrintStatus("%$" PRIu64 " duplicate reads", Stats->duplicate);
+					PrintStatus("%$" PRIu64 " qc-failing reads", Stats->qcFail);
+					PrintStatus("%$" PRIu64 " secondary reads", Stats->secondary);
+					PrintStatus("%$" PRIu64 " unmapped reads", Stats->unMapped);
+					PrintStatus("%$" PRIu64 " reads below minimum mapping quality (%u)", Stats->belowMinMapq, Min_Map_Quality);
+					PrintStatus("%$" PRIu64 " reads too far from a restriction site", Stats->tooFarFromRestrictionSite);
+					PrintStatus("%$" PRIu64 " reads with an invalid reference name", Stats->invalidReferenceName);
 
 					PrintStatus("");
 					u64 totalValidPairs = Stats->FF + Stats->FR + Stats->RF + Stats->RR;
-					PrintStatus("%$d valid HiC pairs", totalValidPairs);
+					PrintStatus("%$" PRIu64 " valid HiC pairs", totalValidPairs);
 					PrintStatus("%$.2f%% FF", 100.0 * (f64)Stats->FF / (f64)totalValidPairs);
 					PrintStatus("%$.2f%% FR", 100.0 * (f64)Stats->FR / (f64)totalValidPairs);
 					PrintStatus("%$.2f%% RF", 100.0 * (f64)Stats->RF / (f64)totalValidPairs);
 					PrintStatus("%$.2f%% RR", 100.0 * (f64)Stats->RR / (f64)totalValidPairs);
-					PrintStatus("%$d intra-sequence pairs", Stats->FFintraSequence + Stats->FRintraSequence + Stats->RFintraSequence + Stats->RRintraSequence);
-					PrintStatus("%$d self-circle pairs", Stats->selfCircle);
-					PrintStatus("%$d dangling-end pairs", Stats->danglingEnd);
-					PrintStatus("%$d re-ligated pairs", Stats->reLigated);
-					PrintStatus("%$d error pairs (same fragment and strand)", Stats->sameFragmentAndStrand);
+					PrintStatus("%$" PRIu64 " intra-sequence pairs", Stats->FFintraSequence + Stats->FRintraSequence + Stats->RFintraSequence + Stats->RRintraSequence);
+					PrintStatus("%$" PRIu64 " self-circle pairs", Stats->selfCircle);
+					PrintStatus("%$" PRIu64 " dangling-end pairs", Stats->danglingEnd);
+					PrintStatus("%$" PRIu64 " re-ligated pairs", Stats->reLigated);
+					PrintStatus("%$" PRIu64 " error pairs (same fragment and strand)", Stats->sameFragmentAndStrand);
+					PrintStatus("");
 
 					{
 						npy_intp dims[1] = {18};
