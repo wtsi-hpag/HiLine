@@ -1034,17 +1034,17 @@ class Pipeline(object):
 
                     def sam_pg_rg_capture():
                         global headermode
-                        seenHeader = False
+                        seen_header = False
                         with os.fdopen(pg_rg_capture_write, "wb") as f_out:
                             for line in sam_pg_rg_capture_input:
                                 if headermode:
                                     if b"@" in line:
-                                        seenHeader = True
+                                        seen_header = True
                                         if b"@PG" in line:
                                             pg_lines.append(line)
                                         elif b"@RG" in line:
                                             rg_lines.append(line)
-                                    elif seenHeader:
+                                    elif seen_header:
                                         headermode = False
 
                                 f_out.write(line)
@@ -1055,8 +1055,13 @@ class Pipeline(object):
                     self._pipeThreads.append(thread)
                     input = read
 
-                    samtools_fastq_cmd = "samtools fastq -t -@ {threads} -0 /dev/null -F 0x900 -".format(
-                        threads=self.threads
+                    samtools_fastq_cmd = "samtools fastq -t{tags} -@ {threads} -0 /dev/null -F 0x900 -".format(
+                        threads=self.threads,
+                        tags=""
+                        if len(self.sam_input.tags) == 0
+                        else "T {tg}".format(
+                            tg=",".join(t for t in self.sam_input.tags)
+                        ),
                     )
                     input = Popen(
                         samtools_fastq_cmd.split(),
@@ -1082,19 +1087,19 @@ class Pipeline(object):
                     def sam_pg_rg_append():
                         global headermode
                         local_header_mode = True
-                        seenHeader = False
+                        seen_header = False
                         header_buffer = []
                         local_pg_lines = []
                         with os.fdopen(pg_rg_append_write, "wb") as f_out:
                             for line in sam_pg_rg_append_input:
                                 if local_header_mode:
                                     if b"@" in line:
-                                        seenHeader = True
+                                        seen_header = True
                                         if b"@PG" in line:
                                             local_pg_lines.append(line)
                                         else:
                                             header_buffer.append(line)
-                                    elif seenHeader:
+                                    elif seen_header:
                                         while headermode:
                                             pass
                                         local_header_mode = False
@@ -3589,13 +3594,15 @@ class Pipeline(object):
     class BWASamReads(BWAAlign):
         """Class for performing a BWA alignment of HiC reads in SAM/BAM/CRAM format."""
 
-        def __init__(self, reads, mark_dups):
+        def __init__(self, reads, mark_dups, tags):
             """
 
             :param reads: (str) Path to SAM/BAM/CRAM reads. May be "<stdin>".
             :param mark_dups: (bool) Whether or not to run the samtools mark_dup pipeline on the resulting alignments.
+            :param tags: (list(str)) List of SAM tags to append to reads
             """
             super().__init__(reads1=reads, reads2=None, mark_dups=mark_dups)
+            self.tags = tags
 
     def register_bwa_alignment(self, reads, mark_dups=True):
         """
@@ -3618,14 +3625,15 @@ class Pipeline(object):
                 )
             )
 
-    def register_bwa_alignment_sam_reads(self, reads, mark_dups=True):
+    def register_bwa_alignment_sam_reads(self, reads, tags=[], mark_dups=True):
         """
         Helper function to perform a BWA alignment of HiC reads in SAM/BAM/CRAM format.
 
         :param reads: (str) Path to reads. May be "<stdin>".
+        :param tags: (list(str)) List of SAM tags to append to reads
         :param mark_dups: (bool) Whether or not to run the samtools mark_dup pipeline on the resulting alignments.
         """
-        self.sam_input = self.BWASamReads(reads=reads, mark_dups=mark_dups)
+        self.sam_input = self.BWASamReads(reads=reads, mark_dups=mark_dups, tags=tags)
 
 
 def documenter(docstring):
@@ -3842,6 +3850,7 @@ def bwa_align_two_reads(pipeline, reads, rmdups):
     default=True,
     help="Run samtools mark_dup pipeline on alignment. Default=rmdups",
 )
+@click.option("--tag", "-t", multiple=True, help="SAM tag(s) to append to reads.")
 @processor
 @documenter(
     """
@@ -3852,8 +3861,10 @@ READS:
     Path to reads in SAM/BAM/CRAM format. Use "-" for stdin.
 """
 )
-def bwa_align_sam_reads(pipeline, reads, rmdups):
-    pipeline.register_bwa_alignment_sam_reads(reads=reads.name, mark_dups=rmdups)
+def bwa_align_sam_reads(pipeline, reads, rmdups, tag):
+    pipeline.register_bwa_alignment_sam_reads(
+        reads=reads.name, mark_dups=rmdups, tags=[t for tg in tag for t in tg.split()]
+    )
 
 
 @cli.command()
