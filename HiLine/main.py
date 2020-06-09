@@ -1070,7 +1070,7 @@ class Pipeline(object):
                         stderr=command_log_handle,
                     ).stdout
                     input = Popen(
-                        "bwa mem -5SPMCp -t {threads} -B 8 {ref} -".format(
+                        "bwa mem -5SPYCp -t {threads} -B 8 {ref} -".format(
                             threads=self.threads, ref=self.reference
                         ).split(),
                         stdin=input,
@@ -1145,7 +1145,7 @@ class Pipeline(object):
                         if self.sam_input.reads1 == "<stdin>":
                             input_file_handle = sys.stdin
                             input = Popen(
-                                "bwa mem -5SPMp -t {threads} -B 8 {ref} -".format(
+                                "bwa mem -5SPYp -t {threads} -B 8 {ref} -".format(
                                     threads=self.threads, ref=self.reference
                                 ).split(),
                                 stdin=input_file_handle,
@@ -1156,7 +1156,7 @@ class Pipeline(object):
                             ).stdout
                         else:
                             input = Popen(
-                                "bwa mem -5SPMp -t {threads} -B 8 {ref} {reads}".format(
+                                "bwa mem -5SPYp -t {threads} -B 8 {ref} {reads}".format(
                                     threads=self.threads,
                                     ref=self.reference,
                                     reads=self.sam_input.reads1,
@@ -1176,7 +1176,7 @@ class Pipeline(object):
 
                         if input_file_handle is None:
                             input = Popen(
-                                "bwa mem -5SPM -t {threads} -B 8 {ref} {reads1} {reads2}".format(
+                                "bwa mem -5SPY -t {threads} -B 8 {ref} {reads1} {reads2}".format(
                                     threads=self.threads,
                                     ref=self.reference,
                                     reads1=self.sam_input.reads1,
@@ -1189,7 +1189,7 @@ class Pipeline(object):
                             ).stdout
                         else:
                             input = Popen(
-                                "bwa mem -5SPM -t {threads} -B 8 {ref} {reads1} {reads2}".format(
+                                "bwa mem -5SPY -t {threads} -B 8 {ref} {reads1} {reads2}".format(
                                     threads=self.threads,
                                     ref=self.reference,
                                     reads1=self.sam_input.reads1,
