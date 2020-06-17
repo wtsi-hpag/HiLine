@@ -1228,13 +1228,7 @@ NextPrime(u32 N)
 { 
    if (N <= 1) return(2); 
 
-   u32 prime = N; 
-   u32 found = 0; 
+   while (!IsPrime(N)) ++N;
 
-   while (!found)
-   { 
-      if (IsPrime(prime++)) found = 1; 
-   } 
-
-   return(prime); 
+   return(N); 
 } 
