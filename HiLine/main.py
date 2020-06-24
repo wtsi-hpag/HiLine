@@ -1038,11 +1038,15 @@ class Pipeline(object):
                         with os.fdopen(pg_rg_capture_write, "wb") as f_out:
                             for line in sam_pg_rg_capture_input:
                                 if headermode:
-                                    if b"@" in line:
+                                    if (
+                                        decoded_line := line.decode(
+                                            "utf-8", errors="backslashreplace"
+                                        )
+                                    ).startswith("@"):
                                         seen_header = True
-                                        if b"@PG" in line:
+                                        if decoded_line.startswith("@PG"):
                                             pg_lines.append(line)
-                                        elif b"@RG" in line:
+                                        elif decoded_line.startswith("@RG"):
                                             rg_lines.append(line)
                                     elif seen_header:
                                         headermode = False
@@ -1093,9 +1097,13 @@ class Pipeline(object):
                         with os.fdopen(pg_rg_append_write, "wb") as f_out:
                             for line in sam_pg_rg_append_input:
                                 if local_header_mode:
-                                    if b"@" in line:
+                                    if (
+                                        decoded_line := line.decode(
+                                            "utf-8", errors="backslashreplace"
+                                        )
+                                    ).startswith("@"):
                                         seen_header = True
-                                        if b"@PG" in line:
+                                        if decoded_line.startswith("@PG"):
                                             local_pg_lines.append(line)
                                         else:
                                             header_buffer.append(line)
