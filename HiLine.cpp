@@ -580,48 +580,52 @@ Handle_Short_Names[ArrayCount(Output_Handles->handles)] =
 	"RR"
 };
 
+struct
+linked_list_node
+{
+	union
+	{
+		volatile u64 value;
+		struct
+		{
+			volatile s32 signedValue;
+			u32 pad;
+		};
+	};
+	linked_list_node *next;
+};
+
+struct
+linked_list
+{
+	linked_list_node *head;
+	linked_list_node *tail;
+};
+
+#define DeclareLinkedListFunction(type) \
+	global_function \
+	void \
+	PushOntoLinkedList(type value, linked_list *list, memory_arena *arena) \
+{ \
+	linked_list_node *node = PushStructP(arena, linked_list_node); \
+	node->value = value; \
+	node->next = 0; \
+	if (!list->head) list->head = node; \
+	if (list->tail) list->tail->next = node; \
+	list->tail = node; \
+}
+
+DeclareLinkedListFunction(volatile u64)
+DeclareLinkedListFunction(volatile s32)
+
 global_function
 void
-CreatePGLineAndTags(sam_buffer *buffer, u08 *lastPGId, s32 handle)
+CreatePGLineAndTags(sam_buffer *buffer, s32 handle)
 {
-	buffer->sam[1] = 'P';
-	buffer->sam[2] = 'G';
-	buffer->sam[3] = '\t';
+	char nameBuff[128];
+	u08 *namePtr = (u08 *)nameBuff;
+	u32 index = buffer->lineLength - 1;
 
-	buffer->sam[4] = 'I';
-	buffer->sam[5] = 'D';
-	buffer->sam[6] = ':';
-
-	u32 index = 7;
-	u08 *namePtr = (u08 *)Name;
-	while (*namePtr) buffer->sam[index++] = *(namePtr++);
-	buffer->sam[index++] = '\t';
-
-	buffer->sam[index++] = 'P';
-	buffer->sam[index++] = 'N';
-	buffer->sam[index++] = ':';
-
-	namePtr = (u08 *)Name;
-	while (*namePtr) buffer->sam[index++] = *(namePtr++);
-	buffer->sam[index++] = '\t';
-
-	if (lastPGId)
-	{
-		buffer->sam[index++] = 'P';
-		buffer->sam[index++] = 'P';
-		buffer->sam[index++] = ':';
-
-		namePtr = lastPGId;
-		while (*namePtr) buffer->sam[index++] = *(namePtr++);
-		buffer->sam[index++] = '\t';
-	}
-
-	buffer->sam[index++] = 'V';
-	buffer->sam[index++] = 'N';
-	buffer->sam[index++] = ':';
-
-	namePtr = (u08 *)Version;
-	while (*namePtr) buffer->sam[index++] = *(namePtr++);
 	buffer->sam[index++] = '\t';
 
 	buffer->sam[index++] = 'm';
@@ -705,22 +709,22 @@ AddTags(sam_buffer *buffer)
 
 global_function
 void
-WriteSamRecordToHandle(sam_buffer *buffer, s32 handle, u08 *lastPGId = 0)
+WriteSamRecordToHandle(sam_buffer *buffer, s32 handle, u08 addPG = 0)
 {
 	if (handle > 0)
 	{
-		u32 PGAndRGAdded = 0;
-		if (buffer->sam[0] == '@' && buffer->sam[1] == '@')
+		u32 oldLength = 0;
+		if (addPG)
 		{
-			PGAndRGAdded = 1;
-			CreatePGLineAndTags(buffer, lastPGId, handle);
+			oldLength = buffer->lineLength;
+			CreatePGLineAndTags(buffer, handle);
 		}
 
 		if (buffer->sam[0] != '@') AddTags(buffer);
 
 		Global_SAM_Write_Error_Flag = write(handle, buffer->sam, buffer->lineLength) != (ssize_t)buffer->lineLength;
 
-		if (PGAndRGAdded) buffer->sam[1] = '@';
+		if (oldLength) buffer->lineLength = oldLength;
 
 		if (Global_SAM_Write_Error_Flag)
 		{
@@ -738,35 +742,32 @@ WriteSamRecord(sam_buffer *buffer)
 	{
 		if (buffer->sam[0] == '@')
 		{
-			static u08 lastPGIdBuffer[128];
-			static u08 *lastPGId = 0;
-
+			u08 addPG = 0;
 			if (buffer->sam[1] == 'P' && buffer->sam[2] == 'G')
 			{
 				u32 index = 4;
-				while ((!(buffer->sam[index - 4] == '\t' && buffer->sam[index - 3] == 'I' && buffer->sam[index - 2] == 'D' && buffer->sam[index - 1] == ':')) && index < buffer->lineLength) ++index;
-				if (index < buffer->lineLength)
+				while ((!(buffer->sam[index - 4] == '\t' && buffer->sam[index - 3] == 'P' && buffer->sam[index - 2] == 'N' && buffer->sam[index - 1] == ':')) && index < buffer->lineLength) ++index;
+				
+				if (index < buffer->lineLength && AreStringsEqual(Name, 0, (char *)(buffer->sam + index), '_'))
 				{
-					u32 pgIDBufferIndex = 0;
-					u08 idCh;
+					index += StringLength((u08 *)Name);
 
-					do
+					while (buffer->sam[index + 1] != '\n')
 					{
-						idCh = buffer->sam[index++];
-						lastPGIdBuffer[pgIDBufferIndex++] = idCh;
-					} while (idCh != '\t' && idCh != '\n' && pgIDBufferIndex < sizeof(lastPGIdBuffer));
-
-					if (idCh == '\t' || idCh == '\n')
-					{
-						lastPGIdBuffer[pgIDBufferIndex - 1] = 0;
-						lastPGId = (u08 *)lastPGIdBuffer;
+						buffer->sam[index] = buffer->sam[index + 1];
+						++index;
 					}
+					
+					buffer->sam[index++] = '\n';
+					buffer->lineLength = index;
+
+					addPG = 1;
 				}
 			}
 
 			ForLoop(ArrayCount(Unique_Output_Handles->handles))
 			{
-				WriteSamRecordToHandle(buffer, Unique_Output_Handles->handles[index], lastPGId);
+				WriteSamRecordToHandle(buffer, Unique_Output_Handles->handles[index], addPG);
 			}
 		}
 		else
@@ -853,44 +854,6 @@ WriteSamRecord(sam_buffer *buffer)
 		AddSAMBufferToQueue(SAM_Buffer_Queue, buffer);
 	}
 }
-
-struct
-linked_list_node
-{
-	union
-	{
-		volatile u64 value;
-		struct
-		{
-			volatile s32 signedValue;
-			u32 pad;
-		};
-	};
-	linked_list_node *next;
-};
-
-struct
-linked_list
-{
-	linked_list_node *head;
-	linked_list_node *tail;
-};
-
-#define DeclareLinkedListFunction(type) \
-	global_function \
-	void \
-	PushOntoLinkedList(type value, linked_list *list, memory_arena *arena) \
-{ \
-	linked_list_node *node = PushStructP(arena, linked_list_node); \
-	node->value = value; \
-	node->next = 0; \
-	if (!list->head) list->head = node; \
-	if (list->tail) list->tail->next = node; \
-	list->tail = node; \
-}
-
-DeclareLinkedListFunction(volatile u64)
-DeclareLinkedListFunction(volatile s32)
 
 struct
 stats
@@ -1440,8 +1403,6 @@ HiLine_Main(PyObject *self, PyObject *args, PyObject *kwargs)
 				return(0);
 			}
 		}
-
-		//Py_DECREF(objParams);
 	}
 
 	Name = (char *)PyUnicode_1BYTE_DATA(objPName);
@@ -1870,17 +1831,11 @@ EndFastaRead:
 							tagBuffer[tagLength++] = 'I';
 							tagBuffer[tagLength++] = ',';
 
-							//tagLength += (u32)stbsp_snprintf(((char *)tagBuffer) + tagLength, sizeof(tagBuffer) - tagLength - 1, "%d", (u32)((treeId >> 32) & 0xffffffff));
-							//tagBuffer[tagLength++] = ',';
 							tagLength += (u32)stbsp_snprintf(((char *)tagBuffer) + tagLength, sizeof(tagBuffer) - tagLength - 1, "%u", (u32)(treeId++ & 0xffffffff));
 							tagBuffer[tagLength++] = ',';
-							//tagLength += (u32)stbsp_snprintf(((char *)tagBuffer) + tagLength, sizeof(tagBuffer) - tagLength - 1, "%d", (u32)((fragment->value >> 32) & 0xffffffff));
-							//tagBuffer[tagLength++] = ',';
 							tagLength += (u32)stbsp_snprintf(((char *)tagBuffer) + tagLength, sizeof(tagBuffer) - tagLength - 1, "%u", (u32)(fragment->value & 0xffffffff));
 							tagBuffer[tagLength++] = ',';
 							u64 upstreamFragmentDistance = fragment->next ? fragment->next->value : node->length;
-							//tagLength += (u32)stbsp_snprintf(((char *)tagBuffer) + tagLength, sizeof(tagBuffer) - tagLength - 1, "%d", (u32)((upstreamFragmentDistance >> 32) & 0xffffffff));
-							//tagBuffer[tagLength++] = ',';
 							tagLength += (u32)stbsp_snprintf(((char *)tagBuffer) + tagLength, sizeof(tagBuffer) - tagLength - 1, "%u", (u32)(upstreamFragmentDistance & 0xffffffff));
 
 							fragment->tag = PushArray(Working_Set, u08, tagLength);
@@ -1993,12 +1948,6 @@ EndFastaRead:
 							{
 								if (!doneHeader && buffer->sam[0] != '@')
 								{
-									sam_buffer *tmp = TakeSAMBufferFromQueue_Wait(SAM_Buffer_Queue);
-									tmp->sam[0] = '@';
-									tmp->sam[1] = '@';
-									tmp->samIndex = samIndex;
-									AddSAMRecordToProcessQueue(buffer->writeQueue, tmp);
-
 									doneHeader = 1;
 									nHeaderLines = samIndex;
 									samIndex = 0;

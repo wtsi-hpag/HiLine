@@ -746,72 +746,100 @@ class Pipeline(object):
             return self.handle.fileno()
 
     class SamPGChain(object):
+        class Exception(Exception):
+            pass
+
         class PGLine(object):
             def __init__(self, line):
-                self._lineDict = {
-                    it[:2]: it[3:]
-                    for it in line.decode("utf-8", errors="ignore")[:-1].split("\t")[1:]
-                }
+                self._lineDict = {}
+                for it in line.decode("utf-8", errors="ignore")[:-1].split("\t")[1:]:
+                    self._lineDict.setdefault(it[:2], []).append(it[3:])
 
             @property
             def id(self):
-                return self._lineDict["ID"]
+                return self._lineDict["ID"][0]
 
             @id.setter
             def id(self, id):
-                self._lineDict["ID"] = id
+                self._lineDict["ID"][0] = id
 
             @property
             def pp(self):
-                return self._lineDict.setdefault("PP", None)
+                return self._lineDict.setdefault("PP", [None])[0]
 
             @pp.setter
             def pp(self, id):
-                self._lineDict["PP"] = id
+                self._lineDict.setdefault("PP", [None])[0] = id
 
             def __str__(self):
                 dic = self._lineDict.copy()
-                line = ["@PG", "ID:" + dic.pop("ID")]
+                line = ["@PG", "ID:" + dic.pop("ID")[0]]
                 if "PN" in dic:
-                    line += ["PN:" + dic.pop("PN")]
+                    line += ["PN:" + dic.pop("PN")[0]]
                 if "PP" in dic:
-                    if dic["PP"] is not None:
-                        line += ["PP:" + dic.pop("PP")]
+                    if dic["PP"][0] is not None:
+                        line += ["PP:" + dic.pop("PP")[0]]
                     else:
                         del dic["PP"]
                 for key, item in dic.items():
-                    line += ["{id}:{val}".format(id=key, val=item)]
+                    for it in item:
+                        line += ["{id}:{val}".format(id=key, val=it)]
                 return "\t".join(line) + "\n"
 
-        def __init__(self, head):
-            head = self.PGLine(head)
-            head.pp = None
-            self._chain = [head]
+        def __init__(self, lines=[]):
+            lines = [self.PGLine(line) for line in lines]
+            pps = [line.pp for line in lines]
+
+            end_idx = []
+            for i, line in enumerate(lines[::-1]):
+                if line.id not in pps:
+                    end_idx.append(len(lines) - i - 1)
+
+            if len(end_idx) > 0 or len(lines) == 0:
+                for end, idx in enumerate(end_idx):
+                    lines[idx], lines[-1 - end] = lines[-1 - end], lines[idx]
+
+                self._chain = lines
+                self._num_chains = max(len(end_idx), 1)
+            else:
+                raise self.Exception("Invalid SAM PG chain detected")
 
         @property
         def ids(self):
             return [line.id for line in self._chain]
 
-        def append(self, line):
-            line = self.PGLine(line)
+        @property
+        def pps(self):
+            return [line.pp for line in self._chain]
 
-            id = line.id
-            ids = self.ids
-            if id in ids:
-                match = re.match(r"^(?P<name>.+)\.(?P<num>\d+)", id)
-                if match:
-                    id = match.group("name")
-                    n = int(match.group("num")) + 1
-                else:
-                    n = 1
-                test = ids[0]
-                while test in ids:
-                    test = id + ".{n}".format(n=n)
-                    n += 1
-                line.id = test
+        @property
+        def num_chains(self):
+            return self._num_chains
 
-            line.pp = self._chain[-1].id
-            self._chain.append(line)
+        def append(self, line_in):
+            for _ in range(self._num_chains):
+
+                line = self.PGLine(line_in)
+
+                if len(self._chain) > 0:
+                    id = line.id
+                    ids = self.ids
+                    if id in ids:
+                        match = re.match(r"^(?P<name>.+)\.(?P<num>\d+)", id)
+                        if match:
+                            id = match.group("name")
+                            n = int(match.group("num")) + 1
+                        else:
+                            n = 1
+                        test = ids[0]
+                        while test in ids:
+                            test = id + ".{n}".format(n=n)
+                            n += 1
+                        line.id = test
+
+                    line.pp = self._chain[-self._num_chains].id
+
+                self._chain.append(line)
 
         def __iter__(self):
             for line in self._chain:
@@ -927,9 +955,12 @@ class Pipeline(object):
                         self.file.close()
 
             self._pipeThreads = []
-
             input_file_handle = None
+            num_programs = 3
+
             if isinstance(self.sam_input, self.SamReader):
+                num_programs += 1
+
                 name = self.sam_input.name
                 if name == "<stdin>":
                     input = sys.stdin
@@ -1004,6 +1035,8 @@ class Pipeline(object):
                         process.communicate()
 
                 if isinstance(self.sam_input, self.BWASamReads):
+                    num_programs += 3
+
                     file_name = self.sam_input.reads1
                     if file_name == "<stdin>":
                         input = sys.stdin
@@ -1115,10 +1148,10 @@ class Pipeline(object):
                                         for headerLine in header_buffer:
                                             f_out.write(headerLine)
 
-                                        chain = self.SamPGChain(pg_lines[0])
-                                        for pgLine in pg_lines[1:]:
-                                            chain.append(pgLine)
+                                        for rgLine in rg_lines:
+                                            f_out.write(rgLine)
 
+                                        chain = self.SamPGChain(pg_lines)
                                         chain.append(
                                             "@PG\tID:samtools\tPN:samtools\tVN:{version}\tCL:{cmd}\n".format(
                                                 version=samtools_version,
@@ -1134,9 +1167,6 @@ class Pipeline(object):
                                         for pgLine in chain:
                                             f_out.write(pgLine)
 
-                                        for rgLine in rg_lines:
-                                            f_out.write(rgLine)
-
                                         f_out.write(line)
                                     else:
                                         header_buffer.append(line)
@@ -1149,6 +1179,8 @@ class Pipeline(object):
                     input = read
 
                 else:
+                    num_programs += 1
+
                     if self.sam_input.reads2 is None:
                         if self.sam_input.reads1 == "<stdin>":
                             input_file_handle = sys.stdin
@@ -1214,6 +1246,8 @@ class Pipeline(object):
                 self.log_error(exception=self.Exception("unknown input type"))
 
             if self.sam_input.markDups:
+                num_programs += 5
+
                 command_log_handle = self._loggerHandle.add_logger(
                     log_func=self.logger.info,
                     id="marking duplicates in {file}".format(file=name),
@@ -1263,6 +1297,8 @@ class Pipeline(object):
                 )
 
             else:
+                num_programs += 1
+
                 command = Popen(
                     "samtools view -h -".split(),
                     stdin=input,
@@ -1271,17 +1307,90 @@ class Pipeline(object):
                         log_func=self.logger.info, id="reading {file}".format(file=name)
                     ),
                 )
+
             command.__enter__()
-            self.output_commands.append(command)
+            read, write = os.pipe()
+
+            main_name = NAME + "_main"
+
+            def add_pipeline_pg_line():
+                local_header_mode = True
+                seen_header = False
+                header_buffer = []
+                pg_lines = []
+                with os.fdopen(write, "wb") as f_out:
+                    for line in command.stdout:
+                        if local_header_mode:
+                            if (
+                                decoded_line := line.decode(
+                                    "utf-8", errors="backslashreplace"
+                                )
+                            ).startswith("@"):
+                                seen_header = True
+                                if decoded_line.startswith("@PG"):
+                                    pg_lines.append(line)
+                                else:
+                                    header_buffer.append(line)
+                            elif seen_header:
+                                local_header_mode = False
+
+                                for headerLine in header_buffer:
+                                    f_out.write(headerLine)
+
+                                pipeline_chain = []
+                                for _ in range(num_programs - 3):
+                                    chain = self.SamPGChain(pg_lines)
+                                    pg_lines = [line for line in chain]
+                                    pipeline_chain.insert(
+                                        0, pg_lines[-chain.num_chains]
+                                    )
+                                    pg_lines = pg_lines[: -chain.num_chains]
+                                chain = self.SamPGChain(pg_lines)
+
+                                chain.append(
+                                    "@PG\tID:{id}\tPN:{pn}\tCL:{cl}\tDS:{ds}\tVN:{vn}\n".format(
+                                        id=NAME,
+                                        pn=NAME,
+                                        cl=" ".join(sys.argv),
+                                        vn=VERSION,
+                                        ds="{des} The following {n} programs in this PG chain were called automatically as part of this pipeline.".format(
+                                            des=DESCRIPTION, n=num_programs
+                                        ),
+                                    ).encode(
+                                        "utf-8"
+                                    )
+                                )
+
+                                for pgLine in pipeline_chain:
+                                    chain.append(pgLine)
+
+                                chain.append(
+                                    "@PG\tID:{id}\tPN:{pn}\tVN:{vn}\n".format(
+                                        id=main_name, pn=main_name + "_", vn=VERSION,
+                                    ).encode("utf-8")
+                                )
+
+                                for pgLine in chain:
+                                    f_out.write(pgLine)
+
+                                f_out.write(line)
+                            else:
+                                header_buffer.append(line)
+                        else:
+                            f_out.write(line)
+
+            thread = Thread(target=add_pipeline_pg_line)
+            thread.start()
+            self._pipeThreads.append(thread)
 
             self._samInputWrapper = HandleFileGuard(
-                handle=command.stdout, name=name, file=input_file_handle
+                handle=os.fdopen(read, "rb"), name=name, file=input_file_handle
             )
             self._fastaHandle = self.FastaHandle(path=self.reference)
             lh = self._loggerHandle.__enter__()
 
             self._runParms = self.RunParams(
-                name=NAME,
+                name=NAME + "_main",
                 version=VERSION,
                 fasta_input=self._fastaHandle.__enter__(),
                 sam_input=self._samInputWrapper.__enter__(),
