@@ -538,6 +538,8 @@ class Pipeline(object):
 
         self._saveStatsPath = None
 
+        self._commandLine = None
+
     class Exception(Exception):
         pass
 
@@ -593,6 +595,34 @@ class Pipeline(object):
                 )
             )
         self._exceptionCallback = callback
+
+    @property
+    def command_line(self):
+        return (
+            self._commandLine
+            if self._commandLine is not None
+            else "Called as python library, num_threads: {threads}, min_mapq: {mapq}, reference: {ref}, restriction_sites: {sites}, {sam_in}, {sam_out}{save_stats}".format(
+                threads=self.threads,
+                mapq=self.min_mapq,
+                ref=self.reference,
+                sites=self.restriction_sites,
+                sam_in=self.sam_input,
+                sam_out=", ".join(
+                    "{handle}: {out_file}".format(
+                        handle=self.output.description(handle=handle), out_file=out_file
+                    )
+                    for out_file, handles in self.output_files.items()
+                    for handle in handles
+                ),
+                save_stats=""
+                if self.save_stats_path is None
+                else ", save_stats_path: {path}".format(path=self.save_stats_path),
+            )
+        )
+
+    @command_line.setter
+    def command_line(self, cl):
+        self._commandLine = cl
 
     @property
     def reference(self):
@@ -1351,7 +1381,7 @@ class Pipeline(object):
                                     "@PG\tID:{id}\tPN:{pn}\tCL:{cl}\tDS:{ds}\tVN:{vn}\n".format(
                                         id=NAME,
                                         pn=NAME,
-                                        cl=" ".join(sys.argv),
+                                        cl=self.command_line,
                                         vn=VERSION,
                                         ds="{des} The following {n} programs in this PG chain were called automatically as part of this pipeline.".format(
                                             des=DESCRIPTION, n=num_programs
@@ -3683,6 +3713,11 @@ class Pipeline(object):
             self.name = name
             self.markDups = mark_dups
 
+        def __str__(self):
+            return "SAM_input_file: {file}, run mark_dups: {mkdup}".format(
+                file=self.name, mkdup="yes" if self.markDups else "no"
+            )
+
     def register_sam_input(self, file_name, mark_dups=True):
         """
         Helper function to assign an existing / external SAM alignment as an input.
@@ -3708,10 +3743,20 @@ class Pipeline(object):
             self.reads2 = reads2
             self.markDups = mark_dups
 
+        def __str__(self):
+            return "BWA_mem_alignment: {n_reads} fastq read file{s}: {reads}, run mark_dups: {mkdup}".format(
+                reads=self.reads1
+                if self.reads2 is None
+                else "{r1},{r2}".format(r1=self.reads1, r2=self.reads2),
+                n_reads=1 if self.reads2 is None else 2,
+                s="" if self.reads2 is None else "s",
+                mkdup="yes" if self.markDups else "no",
+            )
+
     class BWASamReads(BWAAlign):
         """Class for performing a BWA alignment of HiC reads in SAM/BAM/CRAM format."""
 
-        def __init__(self, reads, mark_dups, tags):
+        def __init__(self, reads, mark_dups, tags=[]):
             """
 
             :param reads: (str) Path to SAM/BAM/CRAM reads. May be "<stdin>".
@@ -3720,6 +3765,17 @@ class Pipeline(object):
             """
             super().__init__(reads1=reads, reads2=None, mark_dups=mark_dups)
             self.tags = tags
+
+        def __str__(self):
+            return "BWA_mem_alignment: SAM input reads: {reads}, run mark_dups: {mkdup}{extra}".format(
+                reads=self.reads1,
+                mkdup="yes" if self.markDups else "no",
+                extra=""
+                if len(self.tags) == 0
+                else ", extra appended SAM tags: {tags}".format(
+                    tags=",".join(self.tags)
+                ),
+            )
 
     def register_bwa_alignment(self, reads, mark_dups=True):
         """
@@ -4527,6 +4583,8 @@ def process_args(processors):
         sys.exit(1)
 
     pipeline.exception_callback = exit_on_error
+
+    pipeline.command_line = " ".join([basename(normpath(sys.argv[0]))] + sys.argv[1:])
 
     for processor in processors:
         processor(pipeline)
