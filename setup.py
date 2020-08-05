@@ -19,6 +19,7 @@
 # SOFTWARE.
 
 import os
+import sys
 import shutil
 import sysconfig
 from subprocess import Popen, PIPE, STDOUT
@@ -169,10 +170,19 @@ def install_hyperscan():
 
 
 def main():
+    if "--debug" in sys.argv:
+        debug = True
+        sys.argv.remove("--debug")
+    else:
+        debug = False
+
     extra_compile_args = sysconfig.get_config_var("CFLAGS").split()
 
     cc, o_flag = get_compiler()
     os.environ["CC"] = cc
+
+    if debug:
+        o_flag = "0"
 
     extra_compile_args += [
         "-std=c++17",
@@ -182,6 +192,9 @@ def main():
         "-pthreads",
         "-fPIC",
     ]
+
+    if debug:
+        extra_compile_args += ["-g"]
 
     extra_link_args = ["-lstdc++", "-lm", "-pthread"]
 
@@ -212,12 +225,23 @@ def main():
                 extra_objects=LIBHS,
                 extra_link_args=extra_link_args,
                 language="c++17",
-            )
+            ),
+            Extension(
+                "_Aligner",
+                sources=["ReadTrimmer.cpp"],
+                include_dirs=[os.path.join(os.getcwd(), "include")],
+                library_dirs=[os.getcwd()],
+                extra_compile_args=extra_compile_args,
+                extra_link_args=extra_link_args,
+                language="c++17",
+            ),
         ],
-        entry_points="""
-              [console_scripts]
-              HiLine=HiLine.main:cli
-          """,
+        entry_points={
+            "console_scripts": [
+                "HiLine=HiLine.main:cli",
+                "_HiLine_Aligner=HiLine.aligner:cli",
+            ]
+        },
         cmdclass={"install": HiLineInstall},
     )
 
