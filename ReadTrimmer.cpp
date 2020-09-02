@@ -187,10 +187,6 @@ GetSequenceFromHashTable(sequence_hash_table *table, char *name, char nameTerm =
     return(result);
 }
 
-global_variable
-sequence_hash_table *
-Sequence_Hash_Table;
-
 struct
 write_buffer
 {

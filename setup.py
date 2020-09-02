@@ -29,7 +29,7 @@ from setuptools import setup, Extension, find_packages
 from setuptools.command.install import install as setup_install
 
 LIBHS = ["libhs.a", "libhs_runtime.a"]
-LIBHS_VERSION = "v5.2.1"
+LIBHS_VERSION = "v5.3.0"
 LIBHS_SOURCE = "https://github.com/intel/hyperscan.git"
 
 
