@@ -229,6 +229,69 @@ WriteFunction(void *in)
     }
 }
 
+struct
+read_buffer
+{
+    u08 *buffer;
+    u64 size;
+};
+
+struct
+read_pool
+{
+    thread_pool *pool;
+    s32 handle;
+    u32 bufferPtr;
+    read_buffer *buffers[2];
+};
+
+global_function
+read_pool *
+CreateReadPool(memory_arena *arena)
+{
+    read_pool *pool = PushStructP(arena, read_pool);
+    pool->pool = ThreadPoolInit(arena, 1);
+
+#define ReadBufferSize MegaByte(16)
+    pool->bufferPtr = 0;
+    pool->buffers[0] = PushStructP(arena, read_buffer);
+    pool->buffers[0]->buffer = PushArrayP(arena, u08, ReadBufferSize);
+    pool->buffers[0]->size = 0;
+    pool->buffers[1] = PushStructP(arena, read_buffer);
+    pool->buffers[1]->buffer = PushArrayP(arena, u08, ReadBufferSize);
+    pool->buffers[1]->size = 0;
+
+    return(pool);
+}
+
+global_function
+void
+FillReadBuffer(void *in)
+{
+    read_pool *pool = (read_pool *)in;
+    read_buffer *buffer = pool->buffers[pool->bufferPtr];
+    buffer->size = (u64)read(pool->handle, buffer->buffer, ReadBufferSize);
+}
+
+global_function
+read_buffer *
+GetNextReadBuffer(read_pool *readPool)
+{
+    FenceIn(ThreadPoolWait(readPool->pool));
+    read_buffer *buffer = readPool->buffers[readPool->bufferPtr];
+    readPool->bufferPtr = (readPool->bufferPtr + 1) & 1;
+    ThreadPoolAddTask(readPool->pool, FillReadBuffer, readPool);
+    return(buffer);
+}
+
+global_function
+void
+CloseReadPool(read_pool *pool)
+{
+    ThreadPoolWait(pool->pool);
+    ThreadPoolDestroy(pool->pool);
+}
+
 global_function
 PyObject *
 Aligner_Main(PyObject *self, PyObject *args, PyObject *kwargs)
@@ -308,17 +371,17 @@ Aligner_Main(PyObject *self, PyObject *args, PyObject *kwargs)
 
     CreateMemoryArena(Working_Set, MegaByte(512));
     thread_pool *writePool = ThreadPoolInit(&Working_Set, 1);
+    read_pool *readPool = CreateReadPool(&Working_Set);
 
     s32 samIn;
     if ((samIn = PyObject_AsFileDescriptor(objSamInput)) > 0)
     {
+        readPool->handle = samIn;
         if ((Sam_Out = PyObject_AsFileDescriptor(objSamOutput)) > 0)
         {
             Py_BEGIN_ALLOW_THREADS;
             u08 samLine[KiloByte(16)];
             u32 linePtr = 0;
-#define ReadBufferSize MegaByte(16)
-            u08 *readBuffer = PushArray(Working_Set, u08, ReadBufferSize);
             
             write_buffer *writeBuffers[2];
             writeBuffers[0] = CreateWriteBuffer(&Working_Set, ReadBufferSize);
@@ -327,21 +390,27 @@ Aligner_Main(PyObject *self, PyObject *args, PyObject *kwargs)
             
             write_buffer *currentWriteBuffer = writeBuffers[writeBufferFlip];
 
-            s64 bytesRead;
             u08 headerMode = 1;
+            u64 numHeaderLines = 0;
             u32 numSequences = 0;
             sequence *sequences = 0;
             sequence *tailSequence = 0;
             sequence_hash_table *sequenceHashTable;
+
+            u64 totalRead = 0;
+            char printNBuffers[2][16] = {{0}};
+            u08 printNBufferPtr = 0;
+
+            read_buffer *readBuffer = GetNextReadBuffer(readPool);
             do
             {
-                bytesRead = read(samIn, readBuffer, ReadBufferSize);
-
+                readBuffer = GetNextReadBuffer(readPool);
+                
                 for (   u64 bufferIndex = 0;
-                        bufferIndex < (u64)bytesRead;
+                        bufferIndex < readBuffer->size;
                         ++bufferIndex )
                 {
-                    u08 character = readBuffer[bufferIndex];
+                    u08 character = readBuffer->buffer[bufferIndex];
                     samLine[linePtr++] = character;
 
                     if (character == '\n')
@@ -349,12 +418,17 @@ Aligner_Main(PyObject *self, PyObject *args, PyObject *kwargs)
                         if (headerMode && samLine[0] != '@')
                         {
                             sequenceHashTable = CreateSequenceHashTable(&Working_Set, numSequences);
+                            PrintStatus("Created digestion fragment hash-table with capacity %u", sequenceHashTable->size);
+                            
                             TraverseLinkedList(sequences, sequence) AddSequenceToHashTable(&Working_Set, sequenceHashTable, node);
                             headerMode = 0;
+
+                            PrintStatus("Inserted %u sequences into hash-table", numSequences);
                         }
 
                         if (headerMode && samLine[1] == 'S' && samLine[2] == 'Q')
                         {
+                            ++numHeaderLines;
                             u32 nameStart = 3;
                             while (!(samLine[nameStart] == '\t' && samLine[nameStart + 1] == 'S' && samLine[nameStart + 2] == 'N' && samLine[nameStart + 3] == ':')) ++nameStart;
                             nameStart += 4;
@@ -495,89 +569,105 @@ Aligner_Main(PyObject *self, PyObject *args, PyObject *kwargs)
                                             }
                                         }
 
-                                        u32 startOffset = firstRefCigar + ((readIsRev == seq->frontOverhangIsFwd) ? 0 : seq->frontOverhang);
-                                        startOffset = startOffset > pos ? startOffset - pos : 0;
-                                        pos = startOffset ? 0 : pos - ((readIsRev == seq->frontOverhangIsFwd) ? 0 : seq->frontOverhang);
-                                        u32 referenceLength = seq->length - ((readIsRev == seq->frontOverhangIsFwd) ? 0 : seq->frontOverhang) - ((readIsRev == seq->endOverhangIsFwd) ? 0 : seq->endOverhang) - pos;
-                                        u32 seqStartOffset = 0;
-                                        u32 seqEndOffset = 0;
+                                        u32 frontOverhang = readIsRev == seq->frontOverhangIsFwd ? 0 : seq->frontOverhang;
+                                        u32 endOverhang = readIsRev == seq->endOverhangIsFwd ? 0 : seq->endOverhang;
 
+                                        u32 startOffset = firstRefCigar + frontOverhang;
+                                        startOffset = startOffset > pos ? startOffset - pos : 0;
+                                        pos = startOffset ? 0 : pos - frontOverhang;
+                                        
+                                        u32 referenceLength = seq->length;
+                                        referenceLength = referenceLength > frontOverhang ? referenceLength - frontOverhang : 0;
+                                        referenceLength = referenceLength > endOverhang ? referenceLength - endOverhang : 0;
+                                        referenceLength = referenceLength > pos ? referenceLength - pos : 0;
+                                        
                                         u08 newSamLine[sizeof(samLine)];
                                         u32 newLinePtr = (u32)stbsp_snprintf((char *)newSamLine, startSamLength + 1, "%s", samLine);
+                                        
+                                        if (referenceLength)
                                         {
-                                            u08 *cigar = samLine + startSamLength;
-                                            u32 numLen = 0;
-                                            u08 cigOp;
-                                            while ((cigOp = *(cigar++)) != '\t')
+                                            u32 seqStartOffset = 0;
+                                            u32 seqEndOffset = 0;
+                                            
                                             {
-                                                u08 process = 1;
-                                                u08 ref = 0;
-                                                u08 qu = 0;
-                                                switch (cigOp)
+                                                u08 *cigar = samLine + startSamLength;
+                                                u32 numLen = 0;
+                                                u08 cigOp;
+                                                while ((cigOp = *(cigar++)) != '\t')
                                                 {
-                                                    case 'I':
-                                                    case 'S':
-                                                    case 'M':
-                                                    case '=':
-                                                    case 'X':
-                                                        qu = 1;
-                                                        if (cigOp == 'I' || cigOp == 'S') break;
-                                                    case 'D':
-                                                    case 'N':
-                                                        ref = 1;
-                                                    case 'H':
-                                                    case 'P':
-                                                        break;
-
-                                                    default:
-                                                        ++numLen;
-                                                        process = 0;
-                                                }
-
-                                                if (process)
-                                                {
-                                                    u32 n = numLen ? StringToInt(cigar - 1, numLen) : 1;
-                                                    numLen = 0;
-
-                                                    if (startOffset)
+                                                    u08 process = 1;
+                                                    u08 ref = 0;
+                                                    u08 qu = 0;
+                                                    switch (cigOp)
                                                     {
-                                                        if (startOffset > n)
-                                                        {
-                                                            startOffset -= n;
-                                                            if (qu) seqStartOffset += n;
-                                                            n = 0;
-                                                        }
-                                                        else
-                                                        {
-                                                            if (qu) seqStartOffset += startOffset;
-                                                            n -= startOffset;
-                                                            startOffset = 0;
-                                                        }
+                                                        case 'I':
+                                                        case 'S':
+                                                        case 'M':
+                                                        case '=':
+                                                        case 'X':
+                                                            qu = 1;
+                                                            if (cigOp == 'I' || cigOp == 'S') break;
+                                                        case 'D':
+                                                        case 'N':
+                                                            ref = 1;
+                                                        case 'H':
+                                                        case 'P':
+                                                            break;
+
+                                                        default:
+                                                            ++numLen;
+                                                            process = 0;
                                                     }
 
-                                                    if (!startOffset)
+                                                    if (process)
                                                     {
-                                                        if (referenceLength > n) referenceLength -= n;
-                                                        else
+                                                        u32 n = numLen ? StringToInt(cigar - 1, numLen) : 1;
+                                                        numLen = 0;
+
+                                                        if (startOffset)
                                                         {
-                                                            if (qu) seqEndOffset += (n - referenceLength);
-                                                            n = referenceLength;
-                                                            referenceLength = 0;
+                                                            if (startOffset > n)
+                                                            {
+                                                                startOffset -= n;
+                                                                if (qu) seqStartOffset += n;
+                                                                n = 0;
+                                                            }
+                                                            else
+                                                            {
+                                                                if (qu) seqStartOffset += startOffset;
+                                                                n -= startOffset;
+                                                                startOffset = 0;
+                                                            }
                                                         }
 
-                                                        if (n) newLinePtr += (u32)stbsp_snprintf((char *)newSamLine + newLinePtr, 6, "%u%c", n, cigOp);
+                                                        if (!startOffset)
+                                                        {
+                                                            if (referenceLength > n) referenceLength -= n;
+                                                            else
+                                                            {
+                                                                if (qu) seqEndOffset += (n - referenceLength);
+                                                                n = referenceLength;
+                                                                referenceLength = 0;
+                                                            }
+
+                                                            if (n) newLinePtr += (u32)stbsp_snprintf((char *)newSamLine + newLinePtr, 6, "%u%c", n, cigOp);
+                                                        }
                                                     }
                                                 }
                                             }
-                                        }
 
-                                        newLinePtr += (u32)stbsp_snprintf((char *)newSamLine + newLinePtr, otherLength + 2, "\t%s", samLine + otherStart);
+                                            newLinePtr += (u32)stbsp_snprintf((char *)newSamLine + newLinePtr, otherLength + 2, "\t%s", samLine + otherStart);
 
-                                        u32 totalOffset = seqStartOffset + seqEndOffset;
-                                        if (totalOffset < seqLength)
-                                        {
-                                            newLinePtr += (u32)stbsp_snprintf((char *)newSamLine + newLinePtr, seqLength - totalOffset + 2, "\t%s", samLine + seqStart + seqStartOffset);
-                                            newLinePtr += (u32)stbsp_snprintf((char *)newSamLine + newLinePtr, seqLength - totalOffset + 2, "\t%s", samLine + qualStart + seqStartOffset);
+                                            u32 totalOffset = seqStartOffset + seqEndOffset;
+                                            if (totalOffset < seqLength)
+                                            {
+                                                newLinePtr += (u32)stbsp_snprintf((char *)newSamLine + newLinePtr, seqLength - totalOffset + 2, "\t%s", samLine + seqStart + seqStartOffset);
+                                                newLinePtr += (u32)stbsp_snprintf((char *)newSamLine + newLinePtr, seqLength - totalOffset + 2, "\t%s", samLine + qualStart + seqStartOffset);
+                                            }
+                                            else
+                                            {
+                                                newLinePtr += (u32)stbsp_snprintf((char *)newSamLine + newLinePtr, 5, "\t*\t*");
+                                            }
                                         }
                                         else
                                         {
@@ -601,19 +691,35 @@ Aligner_Main(PyObject *self, PyObject *args, PyObject *kwargs)
                                 goto End;
                             }
 
+                            FenceIn(ThreadPoolWait(writePool));
+
                             ThreadPoolAddTask(writePool, WriteFunction, currentWriteBuffer);
+
                             writeBufferFlip = (writeBufferFlip + 1) & 1;
                             currentWriteBuffer = writeBuffers[writeBufferFlip];
-
-                            ThreadPoolWait(writePool);
                             currentWriteBuffer->size = 0;
                         }
 
                         ForLoop(linePtr) currentWriteBuffer->buffer[currentWriteBuffer->size++] = samLine[index];
                         linePtr = 0;
+
+#define Log2_Print_Interval 14
+                        if (!(++totalRead & ((1 << Log2_Print_Interval) - 1)))
+                        {
+                            u08 currPtr = printNBufferPtr;
+                            u08 otherPtr = (currPtr + 1) & 1;
+                            stbsp_snprintf(printNBuffers[currPtr], sizeof(printNBuffers[currPtr]), "%$" PRIu64, headerMode ? numHeaderLines : totalRead - numHeaderLines);
+
+                            if (strcmp(printNBuffers[currPtr], printNBuffers[otherPtr]))
+                            {
+                                PrintStatus("%s %s processed", printNBuffers[currPtr], headerMode ? "header lines" : "reads");
+                            }
+
+                            printNBufferPtr = otherPtr;
+                        }
                     }
                 }
-            } while (bytesRead);
+            } while (readBuffer->size);
 
             ThreadPoolAddTask(writePool, WriteFunction, currentWriteBuffer);
             ThreadPoolWait(writePool);
@@ -633,6 +739,7 @@ Aligner_Main(PyObject *self, PyObject *args, PyObject *kwargs)
     }
 
 End:
+    CloseReadPool(readPool);
     ThreadPoolWait(writePool);
     ThreadPoolDestroy(writePool);
     FreeMemoryArena(Working_Set);

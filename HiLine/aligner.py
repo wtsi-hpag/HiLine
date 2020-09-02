@@ -117,7 +117,10 @@ def documenter(docstring):
     "-t", "--threads", type=click.IntRange(2, None, clamp=True), default=2,
 )
 @click.option("--tag", type=str, multiple=True)
-def cli(reference, reads, site, threads, tag):
+@click.option("--trim/--no-trim", default=True)
+@click.option("--bwa1", "bwa", flag_value=1)
+@click.option("--bwa2", "bwa", flag_value=2, default=True)
+def cli(reference, reads, site, threads, tag, trim, bwa):
     logger.setLevel(logging.INFO)
     logger.addHandler(
         create_logger_handle(stream=sys.stderr, typeid="status", level=logging.INFO)
@@ -166,9 +169,10 @@ def cli(reference, reads, site, threads, tag):
             def __str__(self):
                 return ",".join((self.site, str(self.fwd), str(self.rev)))
 
-        def __init__(self, reference, reads, sites, threads, sam_tags):
+        def __init__(self, bwa, trim, reference, reads, sites, threads, sam_tags):
+            self.trim = trim
             self.reference = reference
-            self.reads = [read.name for read in reads]
+            self.reads_from_stdin = "<stdin>" in [read.name for read in reads]
             self.sites = [self.Site(*site) for site in sites]
             self.sam_tags = sam_tags
             self.threads = threads
@@ -176,12 +180,12 @@ def cli(reference, reads, site, threads, tag):
             self.name = self.reference + "." + str(self.hash) + ".HiLine_Reference"
             self.bwa = self.get_bwa(
                 threads=threads // 2,
-                sam_tags=sam_tags,
-                reads=["-" if read == "<stdin>" else read for read in self.reads],
+                reads=["-" if read.name == "<stdin>" else read.name for read in reads],
+                version=bwa,
             )
 
         @staticmethod
-        def get_bwa(threads, sam_tags, reads):
+        def get_bwa(threads, reads, version):
             class Bwa(object):
                 def index_command(self, fasta, prefix=None):
                     if prefix is None:
@@ -192,8 +196,7 @@ def cli(reference, reads, site, threads, tag):
                 def run_command(self, reference, stdin=False):
                     return (
                         self.program_name
-                        + " mem -5SPY{C}{p} -t {threads} -B 8 {ref} {r1}{r2}".format(
-                            C="C" if len(sam_tags) > 0 else "",
+                        + " mem -5SPYC{p} -t {threads} -B 8 {ref} {r1}{r2}".format(
                             p="p" if stdin else ("p" if len(reads) == 1 else ""),
                             threads=threads,
                             ref=reference + "." + self.program_name,
@@ -220,6 +223,9 @@ def cli(reference, reads, site, threads, tag):
                 )
 
             try:
+                if version == 1:
+                    raise FileNotFoundError("bwa 1 selected")
+
                 with Popen(
                     "bwa-mem2 version".split(), stdout=PIPE, stderr=STDOUT
                 ) as process:
@@ -334,7 +340,7 @@ def cli(reference, reads, site, threads, tag):
         def index(self, logger_handle):
             threads = []
 
-            if not (
+            if self.trim and not (
                 isdir(self.name)
                 and all(
                     isfile(join(self.name, "ref." + self.bwa.program_name + "." + ext))
@@ -361,7 +367,7 @@ def cli(reference, reads, site, threads, tag):
                                 for digest_rec in self.digest(rec):
                                     SeqIO.write(digest_rec, tmp_file, "fasta")
                         handle = logger_handle.add_logger(
-                            logger.info, "index digestion"
+                            logger.info, "index digestion fragments"
                         )
                         with Popen(
                             self.bwa.index_command(
@@ -437,15 +443,14 @@ def cli(reference, reads, site, threads, tag):
 
                 self.index(logger_handle)
 
-                handle = logger_handle.add_logger(
-                    logger.info, "initial digested reference alignment"
-                )
-                with Popen(
-                    "samtools view -h -".split(),
-                    stdout=PIPE,
-                    stderr=handle,
-                    stdin=Popen(
-                        "samtools collate -Ouf - .aligner.trimming.collate".split(),
+                if self.trim:
+                    handle = logger_handle.add_logger(
+                        logger.info, "digestion fragment alignment"
+                    )
+                    with Popen(
+                        "samtools view -@ {threads} -hF 0x900 -".format(
+                            threads=self.threads
+                        ).split(),
                         stdout=PIPE,
                         stderr=handle,
                         stdin=Popen(
@@ -454,173 +459,182 @@ def cli(reference, reads, site, threads, tag):
                             ).split(),
                             stderr=handle,
                             stdout=PIPE,
+                            stdin=sys.stdin if self.reads_from_stdin else None,
                         ).stdout,
-                    ).stdout,
-                ) as view_process:
+                    ) as view_process:
 
-                    read_, write_ = os.pipe()
+                        read_, write_ = os.pipe()
 
-                    def main_fn():
-                        class RunParams(object):
-                            samInput = view_process.stdout
-                            samOutput = write_
-                            nThreads = self.threads
-                            info = logger_handle.add_logger(
-                                logger.info, "read trimming"
-                            )
-                            error = logger_handle.add_logger(
-                                logger.error, "read trimming"
-                            )
+                        def main_fn():
+                            class RunParams(object):
+                                samInput = view_process.stdout
+                                samOutput = write_
+                                nThreads = self.threads
+                                info = logger_handle.add_logger(
+                                    logger.info, "read trimming"
+                                )
+                                error = logger_handle.add_logger(
+                                    logger.error, "read trimming"
+                                )
 
-                        _Aligner_Main(params=RunParams())
-                        os.close(write_)
+                            _Aligner_Main(params=RunParams())
+                            os.close(write_)
 
-                    thread = Thread(target=main_fn)
-                    thread.start()
-                    threads = [thread]
+                        thread = Thread(target=main_fn)
+                        thread.start()
+                        threads = [thread]
 
-                    read, write = os.pipe()
-                    global seen_header
-                    seen_header = False
-                    global pg_lines
-                    pg_lines = []
-
-                    def thread_fn():
+                        read, write = os.pipe()
                         global seen_header
+                        seen_header = False
                         global pg_lines
+                        pg_lines = []
 
-                        with os.fdopen(write, "wb") as f_out, os.fdopen(
-                            read_, "rb"
-                        ) as f_in:
-                            for line in f_in:
-                                if not seen_header:
-                                    if (
-                                        decoded_line := line.decode(
-                                            "utf-8", errors="replace"
-                                        )
-                                    ).startswith("@"):
-                                        if decoded_line.startswith("@PG"):
-                                            pg_lines.append(line)
-                                    else:
-                                        seen_header = True
-
-                                f_out.write(line)
-
-                    thread = Thread(target=thread_fn)
-                    thread.start()
-                    threads.append(thread)
-
-                    samtools_fastq_cmd = "samtools fastq -t{tags} -0 /dev/null -F 0x900 -".format(
-                        tags=""
-                        if len(self.sam_tags) == 0
-                        else "T {tg}".format(tg=",".join(t for t in self.sam_tags)),
-                    )
-
-                    handle = logger_handle.add_logger(
-                        logger.info, "main reference alignment"
-                    )
-                    with Popen(
-                        self.bwa.run_command(
-                            reference=self.reference, stdin=True
-                        ).split(),
-                        stdout=PIPE,
-                        stderr=handle,
-                        stdin=Popen(
-                            samtools_fastq_cmd.split(),
-                            stdout=PIPE,
-                            stderr=handle,
-                            stdin=read,
-                        ).stdout,
-                    ) as bwa_process:
-
-                        def thread_fn_2():
+                        def thread_fn():
                             global seen_header
                             global pg_lines
-                            local_pg_lines = []
-                            header_buffer = []
-                            header_mode = True
-                            for line in bwa_process.stdout:
-                                if header_mode:
-                                    if (
-                                        decoded_line := line.decode(
-                                            "utf-8", errors="replace"
-                                        )
-                                    ).startswith("@"):
-                                        if decoded_line.startswith("@PG"):
-                                            local_pg_lines.append(line)
+
+                            with os.fdopen(write, "wb") as f_out, os.fdopen(
+                                read_, "rb"
+                            ) as f_in:
+                                for line in f_in:
+                                    if not seen_header:
+                                        if (
+                                            decoded_line := line.decode(
+                                                "utf-8", errors="replace"
+                                            )
+                                        ).startswith("@"):
+                                            if decoded_line.startswith("@PG"):
+                                                pg_lines.append(line)
                                         else:
-                                            header_buffer.append(line)
+                                            seen_header = True
+
+                                    f_out.write(line)
+
+                        thread = Thread(target=thread_fn)
+                        thread.start()
+                        threads.append(thread)
+
+                        samtools_fastq_cmd = "samtools fastq -@ {threads} -t{tags} -0 /dev/null -F 0x900 -".format(
+                            tags=""
+                            if len(self.sam_tags) == 0
+                            else "T {tg}".format(tg=",".join(t for t in self.sam_tags)),
+                            threads=self.threads,
+                        )
+
+                        handle = logger_handle.add_logger(
+                            logger.info, "reference alignment"
+                        )
+                        with Popen(
+                            self.bwa.run_command(
+                                reference=self.reference, stdin=True
+                            ).split(),
+                            stdout=PIPE,
+                            stderr=handle,
+                            stdin=Popen(
+                                samtools_fastq_cmd.split(),
+                                stdout=PIPE,
+                                stderr=handle,
+                                stdin=read,
+                            ).stdout,
+                        ) as bwa_process:
+
+                            def thread_fn_2():
+                                global seen_header
+                                global pg_lines
+                                local_pg_lines = []
+                                header_buffer = []
+                                header_mode = True
+                                for line in bwa_process.stdout:
+                                    if header_mode:
+                                        if (
+                                            decoded_line := line.decode(
+                                                "utf-8", errors="replace"
+                                            )
+                                        ).startswith("@"):
+                                            if decoded_line.startswith("@PG"):
+                                                local_pg_lines.append(line)
+                                            else:
+                                                header_buffer.append(line)
+                                        else:
+                                            header_mode = False
+                                            while not seen_header:
+                                                pass
+
+                                            chain = pl.SamPGChain(pg_lines)
+                                            chain.append(
+                                                "@PG\tID:{id}\tPN:{pn}\tCL:{cl}\tDS:{ds}\tVN:{vn}\n".format(
+                                                    id=NAME,
+                                                    pn=NAME,
+                                                    cl=" ".join(
+                                                        [
+                                                            basename(
+                                                                normpath(sys.argv[0])
+                                                            )
+                                                        ]
+                                                        + sys.argv[1:]
+                                                    ),
+                                                    vn=version,
+                                                    ds=DESCRIPTION,
+                                                ).encode(
+                                                    "utf-8"
+                                                )
+                                            )
+                                            chain.append(
+                                                "@PG\tID:samtools\tPN:samtools\tVN:{version}\tCL:{cmd}\n".format(
+                                                    version=samtools_version,
+                                                    cmd=samtools_fastq_cmd,
+                                                ).encode(
+                                                    "utf-8"
+                                                )
+                                            )
+                                            for pg_line in local_pg_lines:
+                                                chain.append(pg_line)
+
+                                            for header_line in header_buffer:
+                                                sys.stdout.buffer.write(header_line)
+
+                                            for pg_line in chain:
+                                                sys.stdout.buffer.write(pg_line)
+
+                                            sys.stdout.buffer.write(line)
                                     else:
-                                        header_mode = False
-                                        while not seen_header:
-                                            pass
-
-                                        chain = pl.SamPGChain(pg_lines)
-                                        chain.append(
-                                            "@PG\tID:{id}\tPN:{pn}\tCL:{cl}\tDS:{ds}\tVN:{vn}\n".format(
-                                                id="HiLine_Read_Trimmer",
-                                                pn="HiLine_Read_Trimmer",
-                                                cl=" ".join(
-                                                    [basename(normpath(sys.argv[0]))]
-                                                    + sys.argv[1:]
-                                                ),
-                                                vn=version,
-                                                ds="Restriction digest aware read trimmer.",
-                                            ).encode(
-                                                "utf-8"
-                                            )
-                                        )
-                                        chain.append(
-                                            "@PG\tID:samtools\tPN:samtools\tVN:{version}\tCL:{cmd}\n".format(
-                                                version=samtools_version,
-                                                cmd=samtools_fastq_cmd,
-                                            ).encode(
-                                                "utf-8"
-                                            )
-                                        )
-                                        for pg_line in local_pg_lines:
-                                            chain.append(pg_line)
-
-                                        for header_line in header_buffer:
-                                            sys.stdout.buffer.write(header_line)
-
-                                        for pg_line in chain:
-                                            sys.stdout.buffer.write(pg_line)
-
                                         sys.stdout.buffer.write(line)
-                                else:
-                                    sys.stdout.buffer.write(line)
 
-                        thread_2 = Thread(target=thread_fn_2)
-                        thread_2.start()
-                        threads.append(thread_2)
-                        for thread in threads:
-                            thread.join()
+                            thread_2 = Thread(target=thread_fn_2)
+                            thread_2.start()
+                            threads.append(thread_2)
+                            for thread in threads:
+                                thread.join()
+                else:
+                    with Popen(
+                        self.bwa.run_command(reference=self.reference).split(),
+                        stderr=logger_handle.add_logger(
+                            logger.info, "reference alignment"
+                        ),
+                        stdout=sys.stdout,
+                        stdin=sys.stdin if self.reads_from_stdin else None,
+                    ) as process:
+                        process.communicate()
 
         def __str__(self):
             return ";".join(
-                (
-                    self.name,
-                    self.reference,
-                    str(self.reads),
-                    str([str(site) for site in self.sites]),
-                )
+                (self.name, self.reference, str([str(site) for site in self.sites]),)
             )
 
         @property
         def hash(self):
-            return int(
-                hashlib.sha256(
-                    (
-                        self.reference
-                        + "".join(self.reads)
-                        + "".join(str(site) for site in self.sites)
-                    ).encode("utf-8")
-                ).hexdigest(),
-                16,
+            return sum(
+                int(hashlib.sha256(string.encode("utf-8")).hexdigest(), 16)
+                for string in (
+                    [basename(normpath(self.reference))]
+                    + [str(site) for site in self.sites]
+                )
             ) % (2 ** 64)
 
     Aligner(
+        bwa=bwa,
+        trim=trim,
         reference=reference,
         reads=reads,
         sites=site,

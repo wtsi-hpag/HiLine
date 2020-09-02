@@ -1012,7 +1012,9 @@ class Pipeline(object):
 
             elif isinstance(self.sam_input, self.BWAAlign):
                 try:
-                    with Popen("bwa", stdout=PIPE, stderr=STDOUT) as process:
+                    with Popen(
+                        "_HiLine_Aligner --help".split(), stdout=PIPE, stderr=STDOUT
+                    ) as process:
                         output = "".join(
                             [
                                 line.decode("utf-8")
@@ -1021,51 +1023,51 @@ class Pipeline(object):
                         )
 
                     match = re.search(
-                        r"Version: (?P<major>\d+)\.(?P<minor1>\d+)\.(?P<minor2>\d+)",
-                        output,
+                        r"_HiLine_Aligner (?P<version>(\d\.)+\d)\.", output,
                     )
 
                     if match is None:
-                        raise self.Exception("Could not determine 'bwa' version")
-
-                    major = int(match.group("major"))
-                    minor1 = int(match.group("minor1"))
-                    minor2 = int(match.group("minor2"))
-
-                    if not (
-                        major > 0
-                        or (major == 0 and minor1 > 7 or (minor1 == 7 and minor2 >= 17))
-                    ):
                         raise self.Exception(
-                            "'bwa' version {major}.{minor1}.{minor2} found, version 0.7.17 or greater required".format(
-                                major=major, minor1=minor1, minor2=minor2
+                            "Could not determine '_HiLine_Aligner' version"
+                        )
+
+                    if match.group("version") != VERSION:
+                        raise self.Exception(
+                            "_HiLine_Aligner version {al_ver} != HiLine version {ver}".format(
+                                al_ver=match.group("version"), ver=VERSION
                             )
                         )
 
                 except FileNotFoundError:
-                    raise self.Exception("'bwa' not found on $PATH")
+                    raise self.Exception("'_HiLine_Aligner' not found on $PATH")
                 except CalledProcessError as ex:
                     raise self.Exception(str(ex))
 
-                name = "BWA alignment"
-
-                if not (
-                    isfile(self.reference + ".amb")
-                    and isfile(self.reference + ".ann")
-                    and isfile(self.reference + ".bwt")
-                    and isfile(self.reference + ".pac")
-                    and isfile(self.reference + ".sa")
-                ):
-                    with Popen(
-                        "bwa index {ref}".format(ref=self.reference).split(),
-                        stderr=self._loggerHandle.add_logger(
-                            log_func=self.logger.info, id="BWA index"
-                        ),
-                    ) as process:
-                        process.communicate()
+                name = "BWA Alignment"
+                aligner_cmd = "_HiLine_Aligner {bwa} {trim} {sites} {tags} -t {threads} {ref}".format(
+                    sites=" ".join(
+                        "--site {s} {f} {r}".format(
+                            s=site.pattern, f=site.loc, r=site.rev_loc
+                        )
+                        for site in restriction_sites
+                    ),
+                    tags=" ".join(
+                        "--tag {t}".format(t=t)
+                        for t in (
+                            self.sam_input.tags
+                            if isinstance(self.sam_input, self.BWASamReads)
+                            else []
+                        )
+                    ),
+                    threads=self.threads,
+                    ref=self.reference,
+                    bwa="--bwa1" if self.sam_input.version == 1 else "--bwa2",
+                    trim="--trim" if self.sam_input.trim else "--no-trim",
+                )
+                num_align_prog = 5 if self.sam_input.trim else 1
 
                 if isinstance(self.sam_input, self.BWASamReads):
-                    num_programs += 3
+                    num_programs += 2 + num_align_prog
 
                     file_name = self.sam_input.reads1
                     if file_name == "<stdin>":
@@ -1137,9 +1139,7 @@ class Pipeline(object):
                         stderr=command_log_handle,
                     ).stdout
                     input = Popen(
-                        "bwa mem -5SPYCp -t {threads} -B 8 {ref} -".format(
-                            threads=self.threads, ref=self.reference
-                        ).split(),
+                        (aligner_cmd + " -").split(),
                         stdin=input,
                         stdout=PIPE,
                         stderr=self._loggerHandle.add_logger(
@@ -1209,15 +1209,13 @@ class Pipeline(object):
                     input = read
 
                 else:
-                    num_programs += 1
+                    num_programs += num_align_prog
 
                     if self.sam_input.reads2 is None:
                         if self.sam_input.reads1 == "<stdin>":
                             input_file_handle = sys.stdin
                             input = Popen(
-                                "bwa mem -5SPYp -t {threads} -B 8 {ref} -".format(
-                                    threads=self.threads, ref=self.reference
-                                ).split(),
+                                (aligner_cmd + " -").split(),
                                 stdin=input_file_handle,
                                 stdout=PIPE,
                                 stderr=self._loggerHandle.add_logger(
@@ -1226,10 +1224,8 @@ class Pipeline(object):
                             ).stdout
                         else:
                             input = Popen(
-                                "bwa mem -5SPYp -t {threads} -B 8 {ref} {reads}".format(
-                                    threads=self.threads,
-                                    ref=self.reference,
-                                    reads=self.sam_input.reads1,
+                                "{cmd} {reads}".format(
+                                    cmd=aligner_cmd, reads=self.sam_input.reads1,
                                 ).split(),
                                 stdout=PIPE,
                                 stderr=self._loggerHandle.add_logger(
@@ -1246,9 +1242,8 @@ class Pipeline(object):
 
                         if input_file_handle is None:
                             input = Popen(
-                                "bwa mem -5SPY -t {threads} -B 8 {ref} {reads1} {reads2}".format(
-                                    threads=self.threads,
-                                    ref=self.reference,
+                                "{cmd} {reads1} {reads2}".format(
+                                    cmd=aligner_cmd,
                                     reads1=self.sam_input.reads1,
                                     reads2=self.sam_input.reads2,
                                 ).split(),
@@ -1259,9 +1254,8 @@ class Pipeline(object):
                             ).stdout
                         else:
                             input = Popen(
-                                "bwa mem -5SPY -t {threads} -B 8 {ref} {reads1} {reads2}".format(
-                                    threads=self.threads,
-                                    ref=self.reference,
+                                "{cmd} {reads1} {reads2}".format(
+                                    cmd=aligner_cmd,
                                     reads1=self.sam_input.reads1,
                                     reads2=self.sam_input.reads2,
                                 ).split(),
@@ -1727,6 +1721,13 @@ class Pipeline(object):
         class RestrictionSite(object):
             def __init__(self, site, logger):
                 self.loc = site.index("^")
+                self.rev_loc = site.index("_")
+
+                if self.loc < self.rev_loc:
+                    self.rev_loc -= 1
+                else:
+                    self.loc -= 1
+
                 self.pattern = Pipeline.RestrictionSites.replace_degen(site)
 
                 logger.info(
@@ -3730,44 +3731,58 @@ class Pipeline(object):
     class BWAAlign(object):
         """Class for performing a BWA alignment of HiC reads."""
 
-        def __init__(self, reads1, reads2, mark_dups):
+        def __init__(self, reads1, reads2, mark_dups, trim, version):
             """
 
             :param reads1: (str) Path to first read set.
             :param reads2: (str) Path to second read set. May be None, in which case reads1 will be assumed to be interleaved reads.
             :param mark_dups: (bool) Whether or not to run the samtools mark_dup pipeline on the resulting alignments.
+            :param trim: (bool) Run HiC read trimming.
+            :param version: (int, = 1 or 2) Use bwa mem (1) or bwa-mem2 (2).
 
             One and only one of reads1 or reads2 may be "<stdin>".
             """
             self.reads1 = reads1
             self.reads2 = reads2
             self.markDups = mark_dups
+            self.trim = trim
+            self.version = version
 
         def __str__(self):
-            return "BWA_mem_alignment: {n_reads} fastq read file{s}: {reads}, run mark_dups: {mkdup}".format(
+            return "BWA_mem_alignment: {bwa} {trim} read-trimming. {n_reads} fastq read file{s}: {reads}, run mark_dups: {mkdup}".format(
                 reads=self.reads1
                 if self.reads2 is None
                 else "{r1},{r2}".format(r1=self.reads1, r2=self.reads2),
                 n_reads=1 if self.reads2 is None else 2,
                 s="" if self.reads2 is None else "s",
                 mkdup="yes" if self.markDups else "no",
+                bwa="bwa mem" if self.version == 1 else "bwa-mem2",
+                trim="with" if self.trim else "without",
             )
 
     class BWASamReads(BWAAlign):
         """Class for performing a BWA alignment of HiC reads in SAM/BAM/CRAM format."""
 
-        def __init__(self, reads, mark_dups, tags=[]):
+        def __init__(self, reads, mark_dups, trim, version, tags=[]):
             """
 
             :param reads: (str) Path to SAM/BAM/CRAM reads. May be "<stdin>".
             :param mark_dups: (bool) Whether or not to run the samtools mark_dup pipeline on the resulting alignments.
-            :param tags: (list(str)) List of SAM tags to append to reads
+            :param tags: (list(str)) List of SAM tags to append to reads.
+            :param trim: (bool) Run HiC read trimming.
+            :param version: (int, = 1 or 2) Use bwa mem (1) or bwa-mem2 (2).
             """
-            super().__init__(reads1=reads, reads2=None, mark_dups=mark_dups)
+            super().__init__(
+                reads1=reads,
+                reads2=None,
+                mark_dups=mark_dups,
+                trim=trim,
+                version=version,
+            )
             self.tags = tags
 
         def __str__(self):
-            return "BWA_mem_alignment: SAM input reads: {reads}, run mark_dups: {mkdup}{extra}".format(
+            return "BWA_mem_alignment: {bwa} {trim} read-trimming. SAM input reads: {reads}, run mark_dups: {mkdup}{extra}".format(
                 reads=self.reads1,
                 mkdup="yes" if self.markDups else "no",
                 extra=""
@@ -3775,21 +3790,37 @@ class Pipeline(object):
                 else ", extra appended SAM tags: {tags}".format(
                     tags=",".join(self.tags)
                 ),
+                bwa="bwa mem" if self.version == 1 else "bwa-mem2",
+                trim="with" if self.trim else "without",
             )
 
-    def register_bwa_alignment(self, reads, mark_dups=True):
+    def register_bwa_alignment(self, reads, mark_dups=True, trim=True, version=2):
         """
         Helper function to perform a BWA alignment of HiC reads in (gzipped) FASTQ format.
 
         :param reads: (list(str)) One- or two-item list of paths to reads. One read path indicates reads are interleaved. One and only one path may be "<stdin>".
         :param mark_dups: (bool) Whether or not to run the samtools mark_dup pipeline on the resulting alignments.
+        :param trim: (bool) Run HiC read-trimming, trim sections of reads that align past restriction sites.
+        :param version: (int, = 1 or 2) Use bwa mem (1) or bwa-mem2 (2).
         """
+
+        if version not in (1, 2):
+            self.log_error(
+                exception=self.Exception(
+                    "BWA alignment: 'version' needs to equal either 1 or 2"
+                )
+            )
+            return
 
         if type(reads) is list and 0 < len(reads) < 3:
             reads1 = reads[0]
             reads2 = reads[1] if len(reads) == 2 else None
             self.sam_input = self.BWAAlign(
-                reads1=reads1, reads2=reads2, mark_dups=mark_dups
+                reads1=reads1,
+                reads2=reads2,
+                mark_dups=mark_dups,
+                trim=trim,
+                version=version,
             )
         else:
             self.log_error(
@@ -3798,15 +3829,30 @@ class Pipeline(object):
                 )
             )
 
-    def register_bwa_alignment_sam_reads(self, reads, tags=[], mark_dups=True):
+    def register_bwa_alignment_sam_reads(
+        self, reads, tags=[], mark_dups=True, trim=True, version=2
+    ):
         """
         Helper function to perform a BWA alignment of HiC reads in SAM/BAM/CRAM format.
 
         :param reads: (str) Path to reads. May be "<stdin>".
         :param tags: (list(str)) List of SAM tags to append to reads
         :param mark_dups: (bool) Whether or not to run the samtools mark_dup pipeline on the resulting alignments.
+        :param trim: (bool) Run HiC read-trimming, trim sections of reads that align past restriction sites.
+        :param version: (int, = 1 or 2) Use bwa mem (1) or bwa-mem2 (2).
         """
-        self.sam_input = self.BWASamReads(reads=reads, mark_dups=mark_dups, tags=tags)
+
+        if version not in (1, 2):
+            self.log_error(
+                exception=self.Exception(
+                    "BWA alignment: 'version' needs to equal either 1 or 2"
+                )
+            )
+            return
+
+        self.sam_input = self.BWASamReads(
+            reads=reads, mark_dups=mark_dups, tags=tags, trim=trim, version=version
+        )
 
 
 def documenter(docstring):
@@ -3981,6 +4027,15 @@ def read_sam(pipeline, sam, rmdups):
     default=True,
     help="Run samtools mark_dup pipeline on alignment. Default=rmdups",
 )
+@click.option(
+    "--trim/--no-trim",
+    default=True,
+    help="Run HiC read trimming, trim sections of reads that align past restriction sites. Default=trim",
+)
+@click.option("--bwa1", "bwa", flag_value=1, help="Use bwa mem. Default=False")
+@click.option(
+    "--bwa2", "bwa", flag_value=2, default=True, help="Use bwa-mem2. Default=True"
+)
 @processor
 @documenter(
     """
@@ -3991,8 +4046,10 @@ READS:
     Path to interleaved reads in (gzipped) FASTQ format. Use "-" for stdin.
 """
 )
-def bwa_align_one_read(pipeline, reads, rmdups):
-    pipeline.register_bwa_alignment(reads=[reads.name], mark_dups=rmdups)
+def bwa_align_one_read(pipeline, reads, rmdups, trim, bwa):
+    pipeline.register_bwa_alignment(
+        reads=[reads.name], mark_dups=rmdups, trim=trim, version=bwa
+    )
 
 
 @cli.command()
@@ -4001,6 +4058,15 @@ def bwa_align_one_read(pipeline, reads, rmdups):
     "--rmdups/--no-rmdups",
     default=True,
     help="Run samtools mark_dup pipeline on alignment. Default=rmdups",
+)
+@click.option(
+    "--trim/--no-trim",
+    default=True,
+    help="Run HiC read trimming, trim sections of reads that align past restriction sites. Default=trim",
+)
+@click.option("--bwa1", "bwa", flag_value=1, help="Use bwa mem. Default=False")
+@click.option(
+    "--bwa2", "bwa", flag_value=2, default=True, help="Use bwa-mem2. Default=True"
 )
 @processor
 @documenter(
@@ -4012,8 +4078,10 @@ READS:
     Two paths to reads in (gzipped) FASTQ format. Use "-" for stdin (for one and only-one path).
 """
 )
-def bwa_align_two_reads(pipeline, reads, rmdups):
-    pipeline.register_bwa_alignment(reads=[r.name for r in reads], mark_dups=rmdups)
+def bwa_align_two_reads(pipeline, reads, rmdups, trim, bwa):
+    pipeline.register_bwa_alignment(
+        reads=[r.name for r in reads], mark_dups=rmdups, trim=trim, version=bwa
+    )
 
 
 @cli.command()
@@ -4024,6 +4092,15 @@ def bwa_align_two_reads(pipeline, reads, rmdups):
     help="Run samtools mark_dup pipeline on alignment. Default=rmdups",
 )
 @click.option("--tag", "-t", multiple=True, help="SAM tag(s) to append to reads.")
+@click.option(
+    "--trim/--no-trim",
+    default=True,
+    help="Run HiC read trimming, trim sections of reads that align past restriction sites. Default=trim",
+)
+@click.option("--bwa1", "bwa", flag_value=1, help="Use bwa mem. Default=False")
+@click.option(
+    "--bwa2", "bwa", flag_value=2, default=True, help="Use bwa-mem2. Default=True"
+)
 @processor
 @documenter(
     """
@@ -4034,9 +4111,13 @@ READS:
     Path to reads in SAM/BAM/CRAM format. Use "-" for stdin.
 """
 )
-def bwa_align_sam_reads(pipeline, reads, rmdups, tag):
+def bwa_align_sam_reads(pipeline, reads, rmdups, tag, trim, bwa):
     pipeline.register_bwa_alignment_sam_reads(
-        reads=reads.name, mark_dups=rmdups, tags=[t for tg in tag for t in tg.split()]
+        reads=reads.name,
+        mark_dups=rmdups,
+        tags=[t for tg in tag for t in tg.split()],
+        trim=trim,
+        version=bwa,
     )
 
 
