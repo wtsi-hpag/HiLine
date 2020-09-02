@@ -200,7 +200,7 @@ def main():
 
     setup(
         name="HiLine",
-        version="0.0.9",
+        version="0.1_rc1",
         packages=find_packages(),
         include_package_data=True,
         python_requires=">=3.8.2",
