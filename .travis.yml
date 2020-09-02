@@ -17,8 +17,9 @@ install:
 - conda info -a
 - if [ "$TRAVIS_OS_NAME" = "osx" ]; then export toolchain=clangxx_osx-64; fi
 - if [ "$TRAVIS_OS_NAME" = "linux" ]; then export toolchain=gxx_linux-64; fi
-- conda create -q -n test-environment -c conda-forge -c bioconda -y python=3.8 clang=9 $toolchain pip numpy=1.18 samtools=1.10 bwa ninja cmake boost pcre pkgconfig pytest ragel
+- conda create -q -n test-environment -c conda-forge -y python=3.8 mamba
 - conda activate test-environment
+- mamba install -c conda-forge -c bioconda -y clang=10 $toolchain pip numpy=1.18 samtools=1.10 bwa-mem2 ninja cmake boost pcre pkgconfig pytest ragel
 - pip install .
 script:
 - pytest -vv
