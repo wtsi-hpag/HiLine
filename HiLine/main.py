@@ -3887,7 +3887,7 @@ def documenter(docstring):
     \b
     Input Commands (one and only-one must be invoked)
     --------------
-        read_sam:                       read in external alignment
+        read-sam:                       read in external alignment
         bwa-align-one-read:             BWA alignment with one interleaved (gzipped) FASTQ read source
         bwa-align-two-reads:            BWA alignment with two (gzipped) FASTQ read sources
         bwa-align-sam-reads:            BWA alignment with a SAM/BAM/CRAM read source
