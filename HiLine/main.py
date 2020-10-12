@@ -42,6 +42,7 @@ DESCRIPTION = "A HiC alignment and classification pipeline."
 LICENCE = "Copyright (c) 2020 Ed Harry, Wellcome Sanger Institute."
 
 logger = logging.getLogger(NAME)
+my_pid = os.getpid()
 
 
 def create_logger_handle(stream, typeid, level):
@@ -68,19 +69,19 @@ class Pipeline(object):
     HiC alignment, classification and analysis pipeline runner
 
     Performs HiC read alignment (using bwa mem) / reads in an existing alignment -> performs optional duplicate marking (using samtools markdups) -> performs HiC read classification based on an in-silico reference digest -> optionally outputs reads to different files based on classification -> returns read statistics
-    
+
 
     Usage example
     -------------
     pipeline = Pipeline()
-    
+
     pipeline.logger = <python logger>
 
     pipeline.reference = "<path to reference FASTA>"
     pipeline.restriction_sites = "<enzyme set>"
     pipeline.threads = <number of threads to use>
     pipeline.min_mapq = <minimum mapping quality>
-    
+
     pipeline.register_bwa_alignment_sam_reads(reads="<path to reads in SAM/BAM/CRAM format>", mark_dups=<True / False>)
     pipeline.register_output_file(file_name="<path to output SAM/BAM/CRAM>", sort=<True / False>, handle=pipeline.output.<handle>)
     pipeline.save_stats_path = "<path to output stats folder>"
@@ -999,8 +1000,8 @@ class Pipeline(object):
 
                 input_file_handle = input
                 input = Popen(
-                    "samtools collate -@ {threads} -Ou - .in.read.collate".format(
-                        threads=self.threads
+                    "samtools collate -@ {threads} -Ou - .{pid}.in.read.collate".format(
+                        threads=self.threads, pid=my_pid
                     ).split(),
                     stdin=input,
                     stdout=PIPE,
@@ -1023,7 +1024,8 @@ class Pipeline(object):
                         )
 
                     match = re.search(
-                        r"_HiLine_Aligner (?P<version>(\d\.)+\d)\.", output,
+                        r"_HiLine_Aligner (?P<version>(\d\.)+\d)\.",
+                        output,
                     )
 
                     if match is None:
@@ -1081,8 +1083,8 @@ class Pipeline(object):
                         id="{file} -> fastq".format(file=file_name),
                     )
                     input = Popen(
-                        "samtools collate -@ {threads} -Ouf - .reads.collate".format(
-                            threads=self.threads
+                        "samtools collate -@ {threads} -Ouf - .{pid}.reads.collate".format(
+                            threads=self.threads, pid=my_pid
                         ).split(),
                         stdin=input,
                         stdout=PIPE,
@@ -1225,7 +1227,8 @@ class Pipeline(object):
                         else:
                             input = Popen(
                                 "{cmd} {reads}".format(
-                                    cmd=aligner_cmd, reads=self.sam_input.reads1,
+                                    cmd=aligner_cmd,
+                                    reads=self.sam_input.reads1,
                                 ).split(),
                                 stdout=PIPE,
                                 stderr=self._loggerHandle.add_logger(
@@ -1305,8 +1308,8 @@ class Pipeline(object):
                 )
 
                 command = Popen(
-                    "samtools collate -@ {threads} -Ou - .in.markdup.collate".format(
-                        threads=self.threads
+                    "samtools collate -@ {threads} -Ou - .{pid}.in.markdup.collate".format(
+                        threads=self.threads, pid=my_pid
                     ).split(),
                     stdin=command.stdout,
                     stdout=PIPE,
@@ -1390,7 +1393,9 @@ class Pipeline(object):
 
                                 chain.append(
                                     "@PG\tID:{id}\tPN:{pn}\tVN:{vn}\n".format(
-                                        id=main_name, pn=main_name + "_", vn=VERSION,
+                                        id=main_name,
+                                        pn=main_name + "_",
+                                        vn=VERSION,
                                     ).encode("utf-8")
                                 )
 

@@ -20,7 +20,7 @@ install:
 - if [ "$TRAVIS_OS_NAME" = "osx" ]; then export bwa=bwa; fi
 - if [ "$TRAVIS_OS_NAME" = "linux" ]; then export bwa=bwa-mem2; fi
 - conda install -y -c conda-forge mamba 
-- mamba create -q -n test-environment -c conda-forge -c bioconda -y python=3.8 clang=10 $toolchain pip numpy=1.18 samtools=1.10 $bwa ninja cmake boost pcre pkgconfig pytest ragel
+- mamba create -q -n test-environment -c conda-forge -c bioconda -y python=3.8 clang=10 $toolchain pip numpy=1.18 samtools=1.11 $bwa ninja cmake boost pcre pkgconfig pytest ragel
 - conda activate test-environment
 - pip install .
 script:
