@@ -1299,8 +1299,9 @@ class Pipeline(object):
                 )
 
                 command = Popen(
-                    "samtools markdup -@ {threads} -S -d 100 -m s -T .in.markdup --output-fmt-option level=0 - -".format(
-                        threads=self.threads
+                    "samtools markdup -@ {threads} -S -d 100 -m s -T .{pid}.in.markdup --output-fmt-option level=0 - -".format(
+                        threads=self.threads,
+                        pid=my_pid
                     ).split(),
                     stdin=command.stdout,
                     stdout=PIPE,
