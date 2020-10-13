@@ -378,7 +378,8 @@ Aligner_Main(PyObject *self, PyObject *args, PyObject *kwargs)
             Py_BEGIN_ALLOW_THREADS;
             u08 samLine[KiloByte(16)];
             u32 linePtr = 0;
-            
+            u08 goodRead = 1;
+
             write_buffer *writeBuffers[2];
             writeBuffers[0] = CreateWriteBuffer(&Working_Set, ReadBufferSize);
             writeBuffers[1] = CreateWriteBuffer(&Working_Set, ReadBufferSize);
@@ -571,20 +572,20 @@ Aligner_Main(PyObject *self, PyObject *args, PyObject *kwargs)
                                         u32 startOffset = firstRefCigar + frontOverhang;
                                         startOffset = startOffset > pos ? startOffset - pos : 0;
                                         pos = startOffset ? 0 : pos - frontOverhang;
-                                        
+
                                         u32 referenceLength = seq->length;
                                         referenceLength = referenceLength > frontOverhang ? referenceLength - frontOverhang : 0;
                                         referenceLength = referenceLength > endOverhang ? referenceLength - endOverhang : 0;
                                         referenceLength = referenceLength > pos ? referenceLength - pos : 0;
-                                        
+
                                         u08 newSamLine[sizeof(samLine)];
                                         u32 newLinePtr = (u32)stbsp_snprintf((char *)newSamLine, startSamLength + 1, "%s", samLine);
-                                        
+
                                         if (referenceLength)
                                         {
                                             u32 seqStartOffset = 0;
                                             u32 seqEndOffset = 0;
-                                            
+
                                             {
                                                 u08 *cigar = samLine + startSamLength;
                                                 u32 numLen = 0;
@@ -662,42 +663,51 @@ Aligner_Main(PyObject *self, PyObject *args, PyObject *kwargs)
                                             }
                                             else
                                             {
-                                                newLinePtr += (u32)stbsp_snprintf((char *)newSamLine + newLinePtr, 5, "\t*\t*");
+                                                //newLinePtr += (u32)stbsp_snprintf((char *)newSamLine + newLinePtr, 5, "\t*\t*");
+                                                goodRead = 0;
                                             }
                                         }
                                         else
                                         {
-                                            newLinePtr += (u32)stbsp_snprintf((char *)newSamLine + newLinePtr, 5, "\t*\t*");
+                                            //newLinePtr += (u32)stbsp_snprintf((char *)newSamLine + newLinePtr, 5, "\t*\t*");
+                                            goodRead = 0;
                                         }
 
-                                        newLinePtr += (u32)stbsp_snprintf((char *)newSamLine + newLinePtr, linePtr - copyPtr + 2, "\t%s", samLine + copyPtr);
+                                        if (goodRead)
+                                        {
+                                            newLinePtr += (u32)stbsp_snprintf((char *)newSamLine + newLinePtr, linePtr - copyPtr + 2, "\t%s", samLine + copyPtr);
 
-                                        stbsp_snprintf((char *)samLine, newLinePtr + 1, "%s", newSamLine);
-                                        linePtr = newLinePtr;
+                                            stbsp_snprintf((char *)samLine, newLinePtr + 1, "%s", newSamLine);
+                                            linePtr = newLinePtr;
+                                        }
                                     }
                                 }
                             }
                         }
 
-                        if ((u64)linePtr > (ReadBufferSize - currentWriteBuffer->size))
+                        if (goodRead)
                         {
-                            if (Global_Write_Error_Flag)
+                            if ((u64)linePtr > (ReadBufferSize - currentWriteBuffer->size))
                             {
-                                exitCode = EXIT_FAILURE;
-                                goto End;
+                                if (Global_Write_Error_Flag)
+                                {
+                                    exitCode = EXIT_FAILURE;
+                                    goto End;
+                                }
+
+                                FenceIn(ThreadPoolWait(writePool));
+
+                                ThreadPoolAddTask(writePool, WriteFunction, currentWriteBuffer);
+
+                                writeBufferFlip = (writeBufferFlip + 1) & 1;
+                                currentWriteBuffer = writeBuffers[writeBufferFlip];
+                                currentWriteBuffer->size = 0;
                             }
 
-                            FenceIn(ThreadPoolWait(writePool));
-
-                            ThreadPoolAddTask(writePool, WriteFunction, currentWriteBuffer);
-
-                            writeBufferFlip = (writeBufferFlip + 1) & 1;
-                            currentWriteBuffer = writeBuffers[writeBufferFlip];
-                            currentWriteBuffer->size = 0;
+                            ForLoop(linePtr) currentWriteBuffer->buffer[currentWriteBuffer->size++] = samLine[index];
                         }
-
-                        ForLoop(linePtr) currentWriteBuffer->buffer[currentWriteBuffer->size++] = samLine[index];
                         linePtr = 0;
+                        goodRead = 1;
 
 #define Log2_Print_Interval 14
                         if (!(++totalRead & ((1 << Log2_Print_Interval) - 1)))

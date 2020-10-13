@@ -1,3 +1,4 @@
 include *.cpp
 graft include
+include HiLine/filter_five_end.pl
 

@@ -26,7 +26,7 @@ import re
 import gzip
 import os
 from os import makedirs
-from os.path import isdir, isfile, join, basename, normpath
+from os.path import isdir, isfile, join, basename, normpath, realpath, dirname
 from subprocess import Popen, PIPE, STDOUT, check_output
 from enum import Enum, auto
 from Bio import SeqIO
@@ -34,6 +34,7 @@ from Bio.SeqRecord import SeqRecord
 from tempfile import NamedTemporaryFile
 from binascii import hexlify
 from threading import Thread
+from pathlib import Path
 
 from HiLine import version
 from HiLine import Pipeline as pl
@@ -114,13 +115,17 @@ def documenter(docstring):
 @click.argument("reads", type=click.File("rb", lazy=False), nargs=-1)
 @click.option("--site", type=(str, int, int), multiple=True)
 @click.option(
-    "-t", "--threads", type=click.IntRange(2, None, clamp=True), default=2,
+    "-t",
+    "--threads",
+    type=click.IntRange(2, None, clamp=True),
+    default=2,
 )
 @click.option("--tag", type=str, multiple=True)
 @click.option("--trim/--no-trim", default=True)
-@click.option("--bwa1", "bwa", flag_value=1)
-@click.option("--bwa2", "bwa", flag_value=2, default=True)
-def cli(reference, reads, site, threads, tag, trim, bwa):
+@click.option("--bwa1", "aligner", flag_value=1)
+@click.option("--bwa2", "aligner", flag_value=2, default=True)
+@click.option("--minimap2", "aligner", flag_value=3, default=True)
+def cli(reference, reads, site, threads, tag, trim, aligner):
     logger.setLevel(logging.INFO)
     logger.addHandler(
         create_logger_handle(stream=sys.stderr, typeid="status", level=logging.INFO)
@@ -169,7 +174,7 @@ def cli(reference, reads, site, threads, tag, trim, bwa):
             def __str__(self):
                 return ",".join((self.site, str(self.fwd), str(self.rev)))
 
-        def __init__(self, bwa, trim, reference, reads, sites, threads, sam_tags):
+        def __init__(self, aligner, trim, reference, reads, sites, threads, sam_tags):
             self.trim = trim
             self.reference = reference
             self.reads_from_stdin = "<stdin>" in [read.name for read in reads]
@@ -178,15 +183,15 @@ def cli(reference, reads, site, threads, tag, trim, bwa):
             self.threads = threads
 
             self.name = self.reference + "." + str(self.hash) + ".HiLine_Reference"
-            self.bwa = self.get_bwa(
-                threads=threads // 2,
+            self.aligner = self.get_aligner(
+                threads=threads // 2 if trim else threads,
                 reads=["-" if read.name == "<stdin>" else read.name for read in reads],
-                version=bwa,
+                version=aligner,
             )
 
         @staticmethod
-        def get_bwa(threads, reads, version):
-            class Bwa(object):
+        def get_aligner(threads, reads, version):
+            class Aligner(object):
                 def index_command(self, fasta, prefix=None):
                     if prefix is None:
                         prefix = basename(normpath(fasta))
@@ -207,11 +212,21 @@ def cli(reference, reads, site, threads, tag, trim, bwa):
                         )
                     )
 
-            class Bwa1(Bwa):
+                def run_process(self, reference, stdin=None, stderr=None, stdout=None):
+                    return Popen(
+                        self.run_command(
+                            reference=reference, stdin=stdin is not None
+                        ).split(),
+                        stderr=stderr,
+                        stdout=stdout,
+                        stdin=stdin,
+                    )
+
+            class Bwa1(Aligner):
                 program_name = "bwa"
                 index_extensions = ("amb", "ann", "bwt", "pac", "sa")
 
-            class Bwa2(Bwa):
+            class Bwa2(Aligner):
                 program_name = "bwa-mem2"
                 index_extensions = (
                     "0123",
@@ -221,6 +236,129 @@ def cli(reference, reads, site, threads, tag, trim, bwa):
                     "bwt.8bit.32",
                     "pac",
                 )
+
+            class MiniMap2:
+                program_name = "minimap2"
+                index_extensions = ("index",)
+
+                def index_command(self, fasta, prefix=None):
+                    if prefix is None:
+                        prefix = basename(normpath(fasta))
+                    prefix += "." + self.program_name
+
+                    return (
+                        self.program_name
+                        + " -t "
+                        + str(threads)
+                        + " -d "
+                        + prefix
+                        + "."
+                        + self.index_extensions[0]
+                        + " "
+                        + "-x sr "
+                        + fasta
+                    )
+
+                def run_process(self, reference, stdin=None, stderr=None, stdout=None):
+                    return Popen(
+                        [
+                            "gawk",
+                            "-v",
+                            "FS=\t",
+                            "-v",
+                            "OFS=\t",
+                            "{if ($1 ~ /^@/) {print($0)} else {$2=and($2,compl(2048)); print(substr($0,2))}}",
+                        ],
+                        stdout=stdout,
+                        stderr=stderr,
+                        stdin=Popen(
+                            [
+                                "perl",
+                                str(
+                                    Path(dirname(realpath(__file__)))
+                                    / "filter_five_end.pl"
+                                ),
+                            ],
+                            stdout=PIPE,
+                            stderr=stderr,
+                            stdin=Popen(
+                                [
+                                    "gawk",
+                                    "{if ($1 ~ /^@/) {print($0)} else if (and($2,64)>0) {print(1$0)} else {print(2$0)}}",
+                                ],
+                                stdout=PIPE,
+                                stderr=stderr,
+                                stdin=Popen(
+                                    (
+                                        self.program_name
+                                        + " -yYt "
+                                        + str(threads)
+                                        + " -ax sr "
+                                        + reference
+                                        + "."
+                                        + self.program_name
+                                        + "."
+                                        + self.index_extensions[0]
+                                        + " "
+                                        + ("-" if stdin is not None else reads[0])
+                                        + (
+                                            ""
+                                            if stdin is not None
+                                            else (
+                                                (" " + reads[1])
+                                                if len(reads) == 2
+                                                else ""
+                                            )
+                                        )
+                                    ).split(),
+                                    stdin=stdin,
+                                    stdout=PIPE,
+                                    stderr=stderr,
+                                ).stdout,
+                            ).stdout,
+                        ).stdout,
+                    )
+
+            if version == 3:
+                try:
+                    with Popen(
+                        "minimap2 --version".split(), stdout=PIPE, stderr=STDOUT
+                    ) as process:
+                        output = "".join(
+                            [
+                                line.decode("utf-8")
+                                for line in process.stdout.readlines()
+                            ]
+                        )
+
+                    match = re.search(
+                        r"(?P<major>\d+)\.(?P<minor1>\d+)-r(?P<minor2>\d+)",
+                        output,
+                    )
+
+                    if match is None:
+                        raise Exception("Could not determine 'minimap2' version")
+
+                    major = int(match.group("major"))
+                    minor1 = int(match.group("minor1"))
+                    minor2 = int(match.group("minor2"))
+
+                    if not (
+                        major > 2
+                        or (major == 2 and minor1 > 17)
+                        or (major == 2 and minor1 == 17 and minor2 >= 941)
+                    ):
+                        raise Exception(
+                            "'minimap2' version {major}.{minor1}-r{minor2} found, version 2.17-r941 or greater required".format(
+                                major=major, minor1=minor1, minor2=minor2
+                            )
+                        )
+
+                    logger.info("Using minimap2")
+                    return MiniMap2()
+
+                except Exception as ex:
+                    sys.exit(str(ex))
 
             try:
                 if version == 1:
@@ -343,8 +481,10 @@ def cli(reference, reads, site, threads, tag, trim, bwa):
             if self.trim and not (
                 isdir(self.name)
                 and all(
-                    isfile(join(self.name, "ref." + self.bwa.program_name + "." + ext))
-                    for ext in self.bwa.index_extensions
+                    isfile(
+                        join(self.name, "ref." + self.aligner.program_name + "." + ext)
+                    )
+                    for ext in self.aligner.index_extensions
                 )
             ):
                 logger.info("Creating virtual digestion index...")
@@ -370,7 +510,7 @@ def cli(reference, reads, site, threads, tag, trim, bwa):
                             logger.info, "index digestion fragments"
                         )
                         with Popen(
-                            self.bwa.index_command(
+                            self.aligner.index_command(
                                 prefix="ref", fasta=tmp_file.name
                             ).split(),
                             cwd=self.name,
@@ -385,8 +525,8 @@ def cli(reference, reads, site, threads, tag, trim, bwa):
 
             if not (
                 all(
-                    isfile(self.reference + "." + self.bwa.program_name + "." + ext)
-                    for ext in self.bwa.index_extensions
+                    isfile(self.reference + "." + self.aligner.program_name + "." + ext)
+                    for ext in self.aligner.index_extensions
                 )
             ):
                 logger.info("Creating reference index...")
@@ -394,7 +534,7 @@ def cli(reference, reads, site, threads, tag, trim, bwa):
                 def thread_fn():
                     handle = logger_handle.add_logger(logger.info, "index reference")
                     with Popen(
-                        self.bwa.index_command(fasta=self.reference).split(),
+                        self.aligner.index_command(fasta=self.reference).split(),
                         stderr=handle,
                         stdout=handle,
                     ) as process:
@@ -453,10 +593,8 @@ def cli(reference, reads, site, threads, tag, trim, bwa):
                         ).split(),
                         stdout=PIPE,
                         stderr=handle,
-                        stdin=Popen(
-                            self.bwa.run_command(
-                                reference=join(self.name, "ref")
-                            ).split(),
+                        stdin=self.aligner.run_process(
+                            reference=join(self.name, "ref"),
                             stderr=handle,
                             stdout=PIPE,
                             stdin=sys.stdin if self.reads_from_stdin else None,
@@ -525,10 +663,8 @@ def cli(reference, reads, site, threads, tag, trim, bwa):
                         handle = logger_handle.add_logger(
                             logger.info, "reference alignment"
                         )
-                        with Popen(
-                            self.bwa.run_command(
-                                reference=self.reference, stdin=True
-                            ).split(),
+                        with self.aligner.run_process(
+                            reference=self.reference,
                             stdout=PIPE,
                             stderr=handle,
                             stdin=Popen(
@@ -537,7 +673,7 @@ def cli(reference, reads, site, threads, tag, trim, bwa):
                                 stderr=handle,
                                 stdin=read,
                             ).stdout,
-                        ) as bwa_process:
+                        ) as aligner_process:
 
                             def thread_fn_2():
                                 global seen_header
@@ -545,7 +681,7 @@ def cli(reference, reads, site, threads, tag, trim, bwa):
                                 local_pg_lines = []
                                 header_buffer = []
                                 header_mode = True
-                                for line in bwa_process.stdout:
+                                for line in aligner_process.stdout:
                                     if header_mode:
                                         if (
                                             decoded_line := line.decode(
@@ -607,8 +743,8 @@ def cli(reference, reads, site, threads, tag, trim, bwa):
                             for thread in threads:
                                 thread.join()
                 else:
-                    with Popen(
-                        self.bwa.run_command(reference=self.reference).split(),
+                    with self.aligner.run_process(
+                        reference=self.reference,
                         stderr=logger_handle.add_logger(
                             logger.info, "reference alignment"
                         ),
@@ -619,7 +755,11 @@ def cli(reference, reads, site, threads, tag, trim, bwa):
 
         def __str__(self):
             return ";".join(
-                (self.name, self.reference, str([str(site) for site in self.sites]),)
+                (
+                    self.name,
+                    self.reference,
+                    str([str(site) for site in self.sites]),
+                )
             )
 
         @property
@@ -633,7 +773,7 @@ def cli(reference, reads, site, threads, tag, trim, bwa):
             ) % (2 ** 64)
 
     Aligner(
-        bwa=bwa,
+        aligner=aligner,
         trim=trim,
         reference=reference,
         reads=reads,
