@@ -100,7 +100,7 @@ class Pipeline(object):
     pipeline.restriction_sites (str): /^<restriction>(, <restriction>)*$/ A comma-separated list of restriction site definitions. See 'restriction_sites' documentation for accepted site formats.
     pipeline.threads (int): Number of threads to use. Must be at least 3.
     pipeline.min_mapq (int): Minimum mapping quality. Reads below this threshold are classified as such and are considered as bad reads.
-    pipeline.sam_input (Pipeline.SamReader / Pipeline.Align): SAM formatted input. One of the two indicated sub-classes, see thier respective documentation. Also see the 'Registering SAM input' section below.
+    pipeline.sam_input (Pipeline.SamReader / Pipeline.Align): SAM formatted input. One of the two indicated sub-classes, see their respective documentation. Also see the 'Registering SAM input' section below.
 
 
     Optional attributes
@@ -117,6 +117,7 @@ class Pipeline(object):
     pipeline.register_sam_input: Sets a SAM/BAM/CRAM formatted alignment source (can be <stdin>). Used to process an external alignment.
     pipeline.register_alignment: Sets a read source in FASTQ format for alignment as part of the pipeline.
     pipeline.register_alignment_sam_reads: Sets a read source in SAM/BAM/CRAM format for alignment as part of the pipeline.
+    pipeline.register_alignment_index_only: Just creates and saves a reference index rather than performing an alignment.
 
     See each function's documentation for details.
 
@@ -921,57 +922,62 @@ class Pipeline(object):
             )
 
             self._loggerHandle = self.LoggerHandle(logger=self.logger)
-            for file, handles in self.output_files.items():
-                logger.info(
-                    "Writing\n\t{desc}\n\t\tto file '{file}'{extra}".format(
-                        file=file,
-                        desc="\n\t".join(
-                            [
-                                "'{des}'".format(des=self.output.description(handle))
-                                for handle in handles
-                            ]
-                        ),
-                        extra=" (sorted and indexed)" if file.sort else "",
-                    )
-                )
-
-                logger_handle = self._loggerHandle.add_logger(
-                    log_func=self.logger.info, id="writing {file}".format(file=file)
-                )
-                command1 = Popen(
-                    (
-                        "samtools sort -@ {threads} -l 0 -".format(threads=self.threads)
-                        if file.sort
-                        else "samtools view -b --output-fmt-option level=0 -"
-                    ).split(),
-                    stdin=PIPE,
-                    stdout=PIPE,
-                    stderr=logger_handle,
-                )
-                command2 = Popen(
-                    "samtools view -@ {threads} -h -o {file} --output-fmt-option level={level}{extra}{index} -".format(
-                        file=file if file.name != "<stdout>" else "-",
-                        level="9" if file.name != "<stdout>" else "0",
-                        extra=" --reference {ref} --output-fmt-option use_bzip2=1 --output-fmt-option use_lzma=1".format(
-                            ref=self.reference
+            if not isinstance(self.sam_input, self.IndexOnly):
+                for file, handles in self.output_files.items():
+                    logger.info(
+                        "Writing\n\t{desc}\n\t\tto file '{file}'{extra}".format(
+                            file=file,
+                            desc="\n\t".join(
+                                [
+                                    "'{des}'".format(
+                                        des=self.output.description(handle)
+                                    )
+                                    for handle in handles
+                                ]
+                            ),
+                            extra=" (sorted and indexed)" if file.sort else "",
                         )
-                        if file.name.endswith(".cram")
-                        else "",
-                        threads=self.threads,
-                        index=" --write-index"
-                        if file.sort and file.name != "<stdout>"
-                        else "",
-                    ).split(),
-                    stdin=command1.stdout,
-                    stderr=logger_handle,
-                )
-                command1.__enter__()
-                command2.__enter__()
-                self.output_commands.append(command1)
-                for handle in handles:
-                    handle.fd = command1.stdin
+                    )
 
-            self.output.validate()
+                    logger_handle = self._loggerHandle.add_logger(
+                        log_func=self.logger.info, id="writing {file}".format(file=file)
+                    )
+                    command1 = Popen(
+                        (
+                            "samtools sort -@ {threads} -l 0 -".format(
+                                threads=self.threads
+                            )
+                            if file.sort
+                            else "samtools view -b --output-fmt-option level=0 -"
+                        ).split(),
+                        stdin=PIPE,
+                        stdout=PIPE,
+                        stderr=logger_handle,
+                    )
+                    command2 = Popen(
+                        "samtools view -@ {threads} -h -o {file} --output-fmt-option level={level}{extra}{index} -".format(
+                            file=file if file.name != "<stdout>" else "-",
+                            level="9" if file.name != "<stdout>" else "0",
+                            extra=" --reference {ref} --output-fmt-option use_bzip2=1 --output-fmt-option use_lzma=1".format(
+                                ref=self.reference
+                            )
+                            if file.name.endswith(".cram")
+                            else "",
+                            threads=self.threads,
+                            index=" --write-index"
+                            if file.sort and file.name != "<stdout>"
+                            else "",
+                        ).split(),
+                        stdin=command1.stdout,
+                        stderr=logger_handle,
+                    )
+                    command1.__enter__()
+                    command2.__enter__()
+                    self.output_commands.append(command1)
+                    for handle in handles:
+                        handle.fd = command1.stdin
+
+                self.output.validate()
 
             class HandleFileGuard(object):
                 def __init__(self, handle, name, file=None):
@@ -1046,7 +1052,7 @@ class Pipeline(object):
                     raise self.Exception(str(ex))
 
                 name = "Alignment"
-                aligner_cmd = "_HiLine_Aligner {version} {trim} {sites} {tags} -t {threads} {ref}".format(
+                aligner_cmd = "_HiLine_Aligner {version} {trim} {sites} {tags} -t {threads} {index} {ref}".format(
                     sites=" ".join(
                         "--site {s} {f} {r}".format(
                             s=site.pattern, f=site.loc, r=site.rev_loc
@@ -1067,8 +1073,23 @@ class Pipeline(object):
                     if self.sam_input.version == 1
                     else ("--bwa2" if self.sam_input.version == 2 else "--minimap2"),
                     trim="--trim" if self.sam_input.trim else "--no-trim",
+                    index="--no-align"
+                    if isinstance(self.sam_input, self.IndexOnly)
+                    else "",
                 )
                 num_align_prog = 5 if self.sam_input.trim else 1
+
+                if isinstance(self.sam_input, self.IndexOnly):
+                    with Popen(
+                        (aligner_cmd + " -").split(),
+                        stderr=self._loggerHandle.add_logger(
+                            log_func=self.logger.info, id="Index Reference"
+                        ),
+                    ) as process:
+                        process.communicate()
+                        self._samInputWrapper = None
+                        self._runParms = self.IndexRun()
+                        return self._runParms
 
                 if isinstance(self.sam_input, self.SamReads):
                     num_programs += 2 + num_align_prog
@@ -1450,7 +1471,8 @@ class Pipeline(object):
                 self._samInputWrapper,
                 self._loggerHandle,
             ]:
-                command.__exit__(exc_type, exc_val, exc_tb)
+                if command is not None:
+                    command.__exit__(exc_type, exc_val, exc_tb)
             for thread in self._pipeThreads:
                 thread.join()
 
@@ -1819,6 +1841,10 @@ class Pipeline(object):
             self.info = info
             self.error = error
 
+    class IndexRun(RunParams):
+        def __init__(self):
+            super().__init__(*tuple([None] * 10))
+
     class LoggerWrapper(object):
         def __init__(self):
             self._logger = None
@@ -1863,7 +1889,7 @@ class Pipeline(object):
 
         stats = None
         with self as runParams:
-            if runParams is not None:
+            if runParams is not None and not isinstance(runParams, self.IndexRun):
                 stats = self.Stats(
                     results=_HiLine_Main(params=runParams), logger=self.logger
                 )
@@ -3805,6 +3831,19 @@ class Pipeline(object):
                 trim="with" if self.trim else "without",
             )
 
+    class IndexOnly(Align):
+        """Class for only performing an alignment reference index"""
+
+        def __init__(self, trim, version):
+            """
+
+            :param trim: (bool) Run HiC read trimming.
+            :param version: (int, = 1, 2 or 3) Use bwa mem (1), bwa-mem2 (2) or minimap2 (3).
+            """
+            super().__init__(
+                reads1=None, reads2=None, mark_dups=None, trim=trim, version=version
+            )
+
     def register_alignment(self, reads, mark_dups=True, trim=True, version=2):
         """
         Helper function to perform an alignment of HiC reads in (gzipped) FASTQ format.
@@ -3865,6 +3904,24 @@ class Pipeline(object):
             reads=reads, mark_dups=mark_dups, tags=tags, trim=trim, version=version
         )
 
+    def register_alignment_index_only(self, trim=True, version=2):
+        """
+        Helper function to perform and save only an alignment index.
+
+        :param trim: (bool) Run HiC read-trimming, trim sections of reads that align past restriction sites.
+        :param version: (int, = 1, 2 or 3) Use bwa mem (1), bwa-mem2 (2) or minimap2 (3).
+        """
+
+        if version not in (1, 2, 3):
+            self.log_error(
+                exception=self.Exception(
+                    "Alignment: 'version' needs to equal either 1, 2 or 3"
+                )
+            )
+            return
+
+        self.sam_input = self.IndexOnly(trim=trim, version=version)
+
 
 def documenter(docstring):
     def inner_documenter(f):
@@ -3893,9 +3950,10 @@ def documenter(docstring):
     Input Commands (one and only-one must be invoked)
     --------------
         read-sam:                       read in external alignment
-        align-one-read:                 Alignment with one interleaved (gzipped) FASTQ read source
-        align-two-reads:                Alignment with two (gzipped) FASTQ read sources
-        align-sam-reads:                Alignment with a SAM/BAM/CRAM read source
+        align-one-read:                 alignment with one interleaved (gzipped) FASTQ read source
+        align-two-reads:                alignment with two (gzipped) FASTQ read sources
+        align-sam-reads:                alignment with a SAM/BAM/CRAM read source
+        index-only:                     just create and save a reference index
     
     \b    
     Output Commands
@@ -4148,6 +4206,36 @@ def align_sam_reads(pipeline, reads, rmdups, tag, trim, version):
         reads=reads.name,
         mark_dups=rmdups,
         tags=[t for tg in tag for t in tg.split()],
+        trim=trim,
+        version=version,
+    )
+
+
+@cli.command()
+@click.option(
+    "--trim/--no-trim",
+    default=True,
+    help="Run HiC read trimming, trim sections of reads that align past restriction sites. Default=trim",
+)
+@click.option("--bwa1", "version", flag_value=1, help="Use bwa mem. Default=False")
+@click.option(
+    "--bwa2", "version", flag_value=2, default=True, help="Use bwa-mem2. Default=True"
+)
+@click.option(
+    "--minimap2",
+    "version",
+    flag_value=3,
+    default=False,
+    help="Use minimap2. Default=False",
+)
+@processor
+@documenter(
+    """
+Alignment index only.
+"""
+)
+def index_only(pipeline, trim, version):
+    pipeline.register_alignment_index_only(
         trim=trim,
         version=version,
     )
