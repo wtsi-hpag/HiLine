@@ -650,20 +650,21 @@ class Pipeline(object):
         /^<restriction>(, <restriction>)*$/
 
         where <restriction> is either: the name of a HiC kit provider, the name of a restriction enzyme, or the string-definition of the restriction site.
-        <restriction> = (<kit>|<enzyme>|<site>)
+        <restriction> = /(<kit>|<enzyme>|<site>)/
 
         <kit> is the name of a HiC kit provider, currently supported are:
+            Arima Genomics version 2: "Arima_v2"
             Arima Genomics: "Arima"
             Dovetail Genomics: "Dovetail"
             Phase Genomics: "Phase"
             Qiagen: "Qiagen"
-        <kit> = ((Arima)|(Dovetail)|(Phase)|(Qiagen)), note: names are case-insensitive.
+        <kit> = /((Arima_v2)|(Arima)|(Dovetail)|(Phase)|(Qiagen))/, note: names are case-insensitive.
 
         <enzyme> is the name of a restriction enzyme e.g. "DpnII", currently all known enzymes defined in the 'Biopython.Restriction' package are supported.
         Note: enzyme names are case-sensitive.
 
         <site> is the IUPAC string definition of a restriction site e.g. "^GATC".
-        <site> = ([ACGTWSMKRYBDHVN]*\^[ACGTWSMKRYBDHVN]*_?[ACGTWSMKRYBDHVN]*)
+        <site> = /([ACGTWSMKRYBDHVN]*\^[ACGTWSMKRYBDHVN]*_?[ACGTWSMKRYBDHVN]*)/
         A caret character "^" is required to appear once and only once, and defines the cut location.
         If the site is not palindromic, an underscore character "_" is required to appear once and only once, and defines the cut location on the reverse strand. Otherwise it is not required.
         """
@@ -1549,6 +1550,7 @@ class Pipeline(object):
             # https://www.biorxiv.org/content/10.1101/659623v1.full.pdf,
             # https://www.qiagen.com/jp/resources/download.aspx?id=813c3f19-b24e-426e-9fc6-23f48defd828&lang=en
             all_enz = {
+                "ARIMA_V2": ("Arima Genomics version 2", ("Arima", "DdeI", "MseI")),
                 "ARIMA": ("Arima Genomics", ("HinfI", "DpnII")),
                 "DOVETAIL": ("Dovetail Genomics", ("DpnII",)),
                 "PHASE": ("Phase Genomics", ("Sau3AI",)),
@@ -4043,20 +4045,21 @@ RESTRICTION_SITES:
     /^<restriction>(, <restriction>)*$/
     
     where <restriction> is either: the name of a HiC kit provider, the name of a restriction enzyme, or the string-definition of the restriction site.
-    <restriction> = (<kit>|<enzyme>|<site>)
+    <restriction> = /(<kit>|<enzyme>|<site>)/
     
     <kit> is the name of a HiC kit provider, currently supported are:
+        Arima Genomics version 2: "Arima_v2"
         Arima Genomics: "Arima"
         Dovetail Genomics: "Dovetail"
         Phase Genomics: "Phase"
         Qiagen: "Qiagen"
-    <kit> = ((Arima)|(Dovetail)|(Phase)|(Qiagen)), note: names are case-insensitive.
+    <kit> = /((Arima_v2)|(Arima)|(Dovetail)|(Phase)|(Qiagen))/, note: names are case-insensitive.
     
     <enzyme> is the name of a restriction enzyme e.g. "DpnII", currently all known enzymes defined in the 'Biopython.Restriction' package are supported.
     Note: enzyme names are case-sensitive.
     
     <site> is the IUPAC string definition of a restriction site e.g. "^GATC".
-    <site> = ([ACGTWSMKRYBDHVN]*\^[ACGTWSMKRYBDHVN]*_?[ACGTWSMKRYBDHVN]*)
+    <site> = /([ACGTWSMKRYBDHVN]*\^[ACGTWSMKRYBDHVN]*_?[ACGTWSMKRYBDHVN]*)/
     A caret character "^" is required to appear once and only once, and defines the cut location.
     If the site is not palindromic, an underscore character "_" is required to appear once and only once, and defines the cut location on the reverse strand. Otherwise it is not required.
 """
