@@ -237,7 +237,6 @@ def cli(reference, reads, site, threads, tag, trim, aligner, align):
                     "amb",
                     "ann",
                     "bwt.2bit.64",
-                    "bwt.8bit.32",
                     "pac",
                 )
 
