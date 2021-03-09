@@ -135,6 +135,18 @@ def cli(reference, reads, site, threads, tag, trim, aligner, align):
     logger.addHandler(
         create_logger_handle(stream=sys.stderr, typeid="error", level=logging.ERROR)
     )
+    logger.addHandler(
+        create_logger_handle(stream=sys.stderr, typeid="warning", level=logging.WARNING)
+    )
+
+    def _showwarning(message, category, filename, lineno, file=None, line=None):
+        logger.warning(
+            f"[{filename} {lineno}] {message}"
+            if line is None
+            else f"[{filename} {lineno}] {message} {line}"
+        )
+
+    warnings.showwarning = _showwarning
 
     if len(site) == 0:
         raise click.BadOptionUsage("site", "must specify at least one 'site'")
