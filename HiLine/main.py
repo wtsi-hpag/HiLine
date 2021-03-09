@@ -22,6 +22,7 @@ import logging
 import os
 import re
 import sys
+import warnings
 from binascii import hexlify
 from functools import update_wrapper
 from os import makedirs
@@ -2832,378 +2833,323 @@ class Pipeline(object):
             :param generate_csvs: (bool) Whether or not to generate and save csv files.
             :param generate_figs: (bool) Whether or not to generate and save figures.
             """
-            if not (save_stats_file or generate_csvs or generate_figs):
-                return
+            _showwarning = warnings.showwarning
+            with warnings.catch_warnings():
+                warnings.showwarning = _showwarning
+                warnings.filterwarnings("ignore", message="divide by zero")
+                warnings.filterwarnings(
+                    "ignore", message="invalid value encountered in double_scalars"
+                )
 
-            if generate_figs:
-                import matplotlib as mpl
-                import matplotlib.pyplot as plt
+                if not (save_stats_file or generate_csvs or generate_figs):
+                    return
 
-                mpl.use("agg")
-                font = {"family": "sans", "weight": "normal", "size": 14}
-                mpl.rc("font", **font)
-                mpl.rcParams["agg.path.chunksize"] = 10000
-                plt.style.use("ggplot")
-                plt.rcParams["figure.figsize"] = (10.0, 7.0)
+                if generate_figs:
+                    import matplotlib as mpl
+                    import matplotlib.pyplot as plt
 
-                import seaborn as sns
+                    mpl.use("agg")
+                    font = {"family": "sans", "weight": "normal", "size": 14}
+                    mpl.rc("font", **font)
+                    mpl.rcParams["agg.path.chunksize"] = 10000
+                    plt.style.use("ggplot")
+                    plt.rcParams["figure.figsize"] = (10.0, 7.0)
 
-                sns.set()
-                sns.set(style="darkgrid")
-                sns.set(color_codes=True)
+                    import seaborn as sns
 
-            def log(msg):
-                self.logger.info("(stats) {msg}".format(msg=msg))
+                    sns.set()
+                    sns.set(style="darkgrid")
+                    sns.set(color_codes=True)
 
-            def zero_bandwidth_wrapper(func, *args, **kwargs):
-                try:
-                    return func(*args, **kwargs)
-                except RuntimeError as rte:
-                    if str(rte).startswith("Selected KDE bandwidth is 0"):
-                        kwargs["kde_kws"] = {"bw": 0.1}
+                def log(msg):
+                    self.logger.info(f"(stats) {msg}")
+
+                def zero_bandwidth_wrapper(func, *args, **kwargs):
+                    try:
                         return func(*args, **kwargs)
-                    else:
-                        raise rte
+                    except RuntimeError as rte:
+                        if str(rte).startswith("Selected KDE bandwidth is 0"):
+                            kwargs["kde_kws"] = {"bw": 0.1}
+                            return func(*args, **kwargs)
+                        else:
+                            raise rte
 
-            def process_basic_stats(df, dir, name, x="counts", y1="type", y2="class"):
-                if generate_csvs:
-                    df.to_csv(
-                        path_or_buf=dir(name="{name}.csv.bz2".format(name=name)),
-                        index=False,
-                    )
-
-                if generate_figs:
-                    figure, axes = plt.subplots(2, 1)
-                    sns.barplot(x=x, y=y1, data=df, ax=axes[0])
-                    sns.barplot(x=x, y=y2, data=df, ax=axes[1], estimator=sum, ci=None)
-
-                    figure.savefig(
-                        dir(name="{name}.png".format(name=name)),
-                        dpi=200,
-                        bbox_inches="tight",
-                    )
-                    figure.clf()
-                    plt.close()
-
-                if generate_figs or generate_csvs:
-                    log("{name} stats saved".format(name=name))
-
-            def process_sequence_stats(df, dir, name):
-                if generate_figs:
-                    figure, axes = plt.subplots(2, 1)
-
-                    df_sub = df[df.type == "raw count"]
-                    sns.stripplot(data=df_sub, y="statistic", x="count", ax=axes[0])
-                    sns.violinplot(data=df_sub, y="statistic", x="count", ax=axes[0])
-                    axes[0].get_yaxis().label.set_visible(False)
-
-                    df_sub = df[df.type == "norm count"]
-                    sns.stripplot(data=df_sub, y="statistic", x="count", ax=axes[1])
-                    sns.violinplot(data=df_sub, y="statistic", x="count", ax=axes[1])
-                    pad = 0.1 * df_sub["count"].max()
-                    axes[1].set_xlim(
-                        df_sub["count"].min() - pad, df_sub["count"].max() + pad
-                    )
-                    axes[1].set_xlabel("count per base-pair")
-                    axes[1].get_yaxis().label.set_visible(False)
-
-                    plt.tight_layout()
-                    figure.savefig(
-                        dir(name="{name}.png".format(name=name)),
-                        dpi=200,
-                        bbox_inches="tight",
-                    )
-                    figure.clf()
-                    plt.close()
-
-                    log(
-                        "{baseName} stats, {name} figure saved".format(
-                            name=name, baseName=dir.path_name
+                def process_basic_stats(
+                    df, dir, name, x="counts", y1="type", y2="class"
+                ):
+                    if generate_csvs:
+                        df.to_csv(
+                            path_or_buf=dir(name="{name}.csv.bz2".format(name=name)),
+                            index=False,
                         )
-                    )
 
-            def process_valid_pairs_per_sequence(df, dir, name, totals=False):
-                if generate_figs:
-                    if totals:
-                        figure, axes = plt.subplots(1, 1)
-                        axes = [axes]
-                        df = df[df.type == "total"]
-                        ids = ["total"]
-                    else:
-                        figure, axes = plt.subplots(2, 2)
-                        axes = axes.flat
-                        df = df[df.type != "total"]
-                        ids = ("ff", "fr", "rf", "rr")
-
-                    for ax, id in zip(axes, ids):
-                        sns.heatmap(
-                            df[df.type == id].pivot("id1", "id2", "count"),
-                            square=True,
-                            ax=ax,
-                            vmin=df["count"].min(),
-                            vmax=df["count"].max(),
+                    if generate_figs:
+                        figure, axes = plt.subplots(2, 1)
+                        sns.barplot(x=x, y=y1, data=df, ax=axes[0])
+                        sns.barplot(
+                            x=x, y=y2, data=df, ax=axes[1], estimator=sum, ci=None
                         )
-                        ax.get_yaxis().label.set_visible(False)
-                        ax.get_xaxis().label.set_visible(False)
-                        ax.set_title(id)
 
-                    plt.tight_layout()
-                    figure.savefig(
-                        dir(name="{name}.png".format(name=name)),
-                        dpi=200,
-                        bbox_inches="tight",
-                    )
-                    figure.clf()
-                    plt.close()
-
-            def process_site_distance_plots(df, dir, name, fr_classes, other_classes):
-                if generate_figs:
-                    figure, axes = plt.subplots(2, 2)
-                    for ax, id in zip(axes.flat, fr_classes + other_classes):
-                        zero_bandwidth_wrapper(
-                            sns.distplot, df[df["class"] == id].dis, ax=ax
+                        figure.savefig(
+                            dir(name="{name}.png".format(name=name)),
+                            dpi=200,
+                            bbox_inches="tight",
                         )
-                        ax.set_xlabel("bp from site")
-                        ax.set_title(id)
-
-                    plt.tight_layout()
-                    figure.savefig(
-                        dir(name="{name}.png".format(name="pair_type")),
-                        dpi=200,
-                        bbox_inches="tight",
-                    )
-                    figure.clf()
-                    plt.close()
-
-                    figure, axes = plt.subplots(1, 2)
-                    for ax, id in zip(axes.flat, ("F", "R")):
-                        zero_bandwidth_wrapper(
-                            sns.distplot, df[df["dir"] == id].dis, ax=ax
-                        )
-                        ax.set_xlabel("bp from site")
-                        ax.set_title(id)
-
-                    plt.tight_layout()
-                    figure.savefig(
-                        dir(name="{name}.png".format(name="read_dir")),
-                        dpi=200,
-                        bbox_inches="tight",
-                    )
-                    figure.clf()
-                    plt.close()
-
-                    df_sub = df[np.array([c in fr_classes for c in df["class"]])].pivot(
-                        "id", "dir", "dis"
-                    )
-                    figure = zero_bandwidth_wrapper(
-                        sns.jointplot, data=df_sub, x="F", y="R", kind="hex"
-                    ).fig
-                    figure.axes[0].set_xlabel("F, bp from site")
-                    figure.axes[0].set_ylabel("R, bp from site")
-
-                    plt.tight_layout()
-                    figure.savefig(
-                        dir(
-                            name="{name}.png".format(
-                                name="{name}_bivariate".format(
-                                    name="_".join(fr_classes)
-                                )
-                            )
-                        ),
-                        dpi=200,
-                        bbox_inches="tight",
-                    )
-                    figure.clf()
-                    plt.close()
-
-                    log(
-                        "{name1}, {name2} plots saved".format(
-                            name1=name, name2=dir.path_name
-                        )
-                    )
-
-            def process_model_f_tests(df, dir, name, all=False):
-                if generate_figs:
-                    if all:
-                        figure, axes = plt.subplots(1, 1)
-                        axes = [axes]
-                        df = df[df["class"] == "all"]
-                        ids = ["all"]
-                    else:
-                        figure, axes = plt.subplots(2, 2)
-                        axes = axes.flat
-                        df = df[df["class"] != "all"]
-                        ids = ("ff", "fr", "rf", "rr")
-
-                    for ax, id in zip(axes, ids):
-                        sns.heatmap(
-                            df[df["class"] == id].pivot("model1", "model2", "p-value"),
-                            square=True,
-                            ax=ax,
-                            vmin=df["p-value"].min(),
-                            vmax=df["p-value"].max(),
-                        )
-                        ax.get_yaxis().label.set_visible(False)
-                        ax.get_xaxis().label.set_visible(False)
-                        ax.set_title(id)
-
-                    plt.tight_layout()
-                    figure.savefig(
-                        dir(name="{name}.png".format(name=name)),
-                        dpi=200,
-                        bbox_inches="tight",
-                    )
-                    figure.clf()
-                    plt.close()
-
-            class Dir(object):
-                def __init__(self, path=base_path):
-                    self.path = path
-
-                @property
-                def path_name(self):
-                    return basename(normpath(self.path))
-
-                def make_path(self, name):
-                    return join(self.path, name)
-
-                def enter(self, name):
-                    return Dir(path=self.make_path(name=name))
-
-                def __enter__(self):
-                    makedirs(name=self.path, exist_ok=True)
-                    return self
-
-                def __exit__(self, exc_type, exc_val, exc_tb):
-                    pass
-
-                def __call__(self, name):
-                    return self.make_path(name=name)
-
-            try:
-                with Dir() as dir:
-                    import pickle
-                    import lzma
-                    from multiprocessing.pool import ThreadPool
-
-                    fig_pool = ThreadPool(1)
-                    pool = ThreadPool(3)
-
-                    def save_file():
-                        if save_stats_file:
-                            log("writing stats file...")
-                            with lzma.open(dir(name="stats.pickle.xz"), "wb") as file:
-                                pickle.dump(self, file)
-                            log("stats file writen")
-
-                    pool.apply_async(save_file)
+                        figure.clf()
+                        plt.close()
 
                     if generate_figs or generate_csvs:
-                        with dir.enter(name="reads") as dir2:
-                            dir_cache_0 = dir2
+                        log("{name} stats saved".format(name=name))
 
-                            def thread_fn_0():
-                                process_basic_stats(
-                                    df=self.reads.data_frame,
-                                    dir=dir_cache_0,
-                                    name=dir_cache_0.path_name,
+                def process_sequence_stats(df, dir, name):
+                    if generate_figs:
+                        figure, axes = plt.subplots(2, 1)
+
+                        df_sub = df[df.type == "raw count"]
+                        sns.stripplot(data=df_sub, y="statistic", x="count", ax=axes[0])
+                        sns.violinplot(
+                            data=df_sub, y="statistic", x="count", ax=axes[0]
+                        )
+                        axes[0].get_yaxis().label.set_visible(False)
+
+                        df_sub = df[df.type == "norm count"]
+                        sns.stripplot(data=df_sub, y="statistic", x="count", ax=axes[1])
+                        sns.violinplot(
+                            data=df_sub, y="statistic", x="count", ax=axes[1]
+                        )
+                        pad = 0.1 * df_sub["count"].max()
+                        axes[1].set_xlim(
+                            df_sub["count"].min() - pad, df_sub["count"].max() + pad
+                        )
+                        axes[1].set_xlabel("count per base-pair")
+                        axes[1].get_yaxis().label.set_visible(False)
+
+                        plt.tight_layout()
+                        figure.savefig(
+                            dir(name="{name}.png".format(name=name)),
+                            dpi=200,
+                            bbox_inches="tight",
+                        )
+                        figure.clf()
+                        plt.close()
+
+                        log(
+                            "{baseName} stats, {name} figure saved".format(
+                                name=name, baseName=dir.path_name
+                            )
+                        )
+
+                def process_valid_pairs_per_sequence(df, dir, name, totals=False):
+                    if generate_figs:
+                        if totals:
+                            figure, axes = plt.subplots(1, 1)
+                            axes = [axes]
+                            df = df[df.type == "total"]
+                            ids = ["total"]
+                        else:
+                            figure, axes = plt.subplots(2, 2)
+                            axes = axes.flat
+                            df = df[df.type != "total"]
+                            ids = ("ff", "fr", "rf", "rr")
+
+                        for ax, id in zip(axes, ids):
+                            sns.heatmap(
+                                df[df.type == id].pivot("id1", "id2", "count"),
+                                square=True,
+                                ax=ax,
+                                vmin=df["count"].min(),
+                                vmax=df["count"].max(),
+                            )
+                            ax.get_yaxis().label.set_visible(False)
+                            ax.get_xaxis().label.set_visible(False)
+                            ax.set_title(id)
+
+                        plt.tight_layout()
+                        figure.savefig(
+                            dir(name="{name}.png".format(name=name)),
+                            dpi=200,
+                            bbox_inches="tight",
+                        )
+                        figure.clf()
+                        plt.close()
+
+                def process_site_distance_plots(
+                    df, dir, name, fr_classes, other_classes
+                ):
+                    if generate_figs:
+                        figure, axes = plt.subplots(2, 2)
+                        for ax, id in zip(axes.flat, fr_classes + other_classes):
+                            zero_bandwidth_wrapper(
+                                sns.histplot, df[df["class"] == id].dis, ax=ax
+                            )
+                            ax.set_xlabel("bp from site")
+                            ax.set_title(id)
+
+                        plt.tight_layout()
+                        figure.savefig(
+                            dir(name="{name}.png".format(name="pair_type")),
+                            dpi=200,
+                            bbox_inches="tight",
+                        )
+                        figure.clf()
+                        plt.close()
+
+                        figure, axes = plt.subplots(1, 2)
+                        for ax, id in zip(axes.flat, ("F", "R")):
+                            zero_bandwidth_wrapper(
+                                sns.histplot, df[df["dir"] == id].dis, ax=ax
+                            )
+                            ax.set_xlabel("bp from site")
+                            ax.set_title(id)
+
+                        plt.tight_layout()
+                        figure.savefig(
+                            dir(name="{name}.png".format(name="read_dir")),
+                            dpi=200,
+                            bbox_inches="tight",
+                        )
+                        figure.clf()
+                        plt.close()
+
+                        df_sub = df[
+                            np.array([c in fr_classes for c in df["class"]])
+                        ].pivot("id", "dir", "dis")
+                        figure = zero_bandwidth_wrapper(
+                            sns.jointplot, data=df_sub, x="F", y="R", kind="hex"
+                        ).fig
+                        figure.axes[0].set_xlabel("F, bp from site")
+                        figure.axes[0].set_ylabel("R, bp from site")
+
+                        plt.tight_layout()
+                        figure.savefig(
+                            dir(
+                                name="{name}.png".format(
+                                    name="{name}_bivariate".format(
+                                        name="_".join(fr_classes)
+                                    )
                                 )
+                            ),
+                            dpi=200,
+                            bbox_inches="tight",
+                        )
+                        figure.clf()
+                        plt.close()
 
-                            fig_pool.apply_async(thread_fn_0)
+                        log(
+                            "{name1}, {name2} plots saved".format(
+                                name1=name, name2=dir.path_name
+                            )
+                        )
 
-                        with dir.enter(name="HiCPairs") as dir2:
-                            dir_cache_1 = dir2
+                def process_model_f_tests(df, dir, name, all=False):
+                    if generate_figs:
+                        if all:
+                            figure, axes = plt.subplots(1, 1)
+                            axes = [axes]
+                            df = df[df["class"] == "all"]
+                            ids = ["all"]
+                        else:
+                            figure, axes = plt.subplots(2, 2)
+                            axes = axes.flat
+                            df = df[df["class"] != "all"]
+                            ids = ("ff", "fr", "rf", "rr")
 
-                            def thread_fn_1():
-                                process_basic_stats(
-                                    df=self.pairs.data_frame,
-                                    dir=dir_cache_1,
-                                    name=dir_cache_1.path_name,
-                                )
+                        for ax, id in zip(axes, ids):
+                            sns.heatmap(
+                                df[df["class"] == id].pivot(
+                                    "model1", "model2", "p-value"
+                                ),
+                                square=True,
+                                ax=ax,
+                                vmin=df["p-value"].min(),
+                                vmax=df["p-value"].max(),
+                            )
+                            ax.get_yaxis().label.set_visible(False)
+                            ax.get_xaxis().label.set_visible(False)
+                            ax.set_title(id)
 
-                                name = "intra_inter_sequence_valid_pairs"
-                                df = self.inter_intra_valid_pairs_data_frame
+                        plt.tight_layout()
+                        figure.savefig(
+                            dir(name="{name}.png".format(name=name)),
+                            dpi=200,
+                            bbox_inches="tight",
+                        )
+                        figure.clf()
+                        plt.close()
 
-                                if generate_csvs:
-                                    df.to_csv(
-                                        path_or_buf=dir_cache_1(
-                                            name="{name}.csv.bz2".format(name=name)
-                                        ),
-                                        index=False,
+                class Dir(object):
+                    def __init__(self, path=base_path):
+                        self.path = path
+
+                    @property
+                    def path_name(self):
+                        return basename(normpath(self.path))
+
+                    def make_path(self, name):
+                        return join(self.path, name)
+
+                    def enter(self, name):
+                        return Dir(path=self.make_path(name=name))
+
+                    def __enter__(self):
+                        makedirs(name=self.path, exist_ok=True)
+                        return self
+
+                    def __exit__(self, exc_type, exc_val, exc_tb):
+                        pass
+
+                    def __call__(self, name):
+                        return self.make_path(name=name)
+
+                try:
+                    with Dir() as dir:
+                        import pickle
+                        import lzma
+                        from multiprocessing.pool import ThreadPool
+
+                        fig_pool = ThreadPool(1)
+                        pool = ThreadPool(3)
+
+                        def save_file():
+                            if save_stats_file:
+                                log("writing stats file...")
+                                with lzma.open(
+                                    dir(name="stats.pickle.xz"), "wb"
+                                ) as file:
+                                    pickle.dump(self, file)
+                                log("stats file writen")
+
+                        pool.apply_async(save_file)
+
+                        if generate_figs or generate_csvs:
+                            with dir.enter(name="reads") as dir2:
+                                dir_cache_0 = dir2
+
+                                def thread_fn_0():
+                                    process_basic_stats(
+                                        df=self.reads.data_frame,
+                                        dir=dir_cache_0,
+                                        name=dir_cache_0.path_name,
                                     )
 
-                                if generate_figs:
-                                    figure, axes = plt.subplots(2, 1)
-                                    sns.barplot(
-                                        x="count",
-                                        y="class",
-                                        data=df,
-                                        hue="type",
-                                        ax=axes[0],
-                                    )
-                                    sns.barplot(
-                                        x="count",
-                                        y="type",
-                                        data=df,
-                                        ax=axes[1],
-                                        estimator=sum,
-                                        ci=None,
+                                fig_pool.apply_async(thread_fn_0)
+
+                            with dir.enter(name="HiCPairs") as dir2:
+                                dir_cache_1 = dir2
+
+                                def thread_fn_1():
+                                    process_basic_stats(
+                                        df=self.pairs.data_frame,
+                                        dir=dir_cache_1,
+                                        name=dir_cache_1.path_name,
                                     )
 
-                                    figure.savefig(
-                                        dir_cache_1(
-                                            name="{name}.png".format(name=name)
-                                        ),
-                                        dpi=200,
-                                        bbox_inches="tight",
-                                    )
-                                    figure.clf()
-                                    plt.close()
-
-                            fig_pool.apply_async(thread_fn_1)
-
-                        with dir.enter(name="sequences") as dir2:
-                            with dir2.enter(name="per_sequence") as dir3:
-                                dir_cache_2 = dir3
-
-                                def thread_fn_2():
-                                    df = self.sequences_data_frame
+                                    name = "intra_inter_sequence_valid_pairs"
+                                    df = self.inter_intra_valid_pairs_data_frame
 
                                     if generate_csvs:
                                         df.to_csv(
-                                            path_or_buf=dir_cache_2(
-                                                name="{name}.csv.bz2".format(
-                                                    name=dir_cache_2.path_name
-                                                )
-                                            ),
-                                            index=False,
-                                        )
-
-                                    process_sequence_stats(
-                                        df=df[df.pair & (df.total == False)],
-                                        dir=dir_cache_2,
-                                        name="invalid_pairs",
-                                    )
-                                    process_sequence_stats(
-                                        df=df[df.pair & df.total],
-                                        dir=dir_cache_2,
-                                        name="total_invalid_pairs",
-                                    )
-                                    process_sequence_stats(
-                                        df=df[
-                                            (df.statistic == "restriction sites")
-                                            & (df.total == False)
-                                        ],
-                                        dir=dir_cache_2,
-                                        name="restriction_sites",
-                                    )
-
-                                    name = "inter_sequence_indexes"
-                                    df = self.inter_sequence_indexes
-
-                                    if generate_csvs:
-                                        df.to_csv(
-                                            path_or_buf=dir_cache_2(
+                                            path_or_buf=dir_cache_1(
                                                 name="{name}.csv.bz2".format(name=name)
                                             ),
                                             index=False,
@@ -3211,23 +3157,24 @@ class Pipeline(object):
 
                                     if generate_figs:
                                         figure, axes = plt.subplots(2, 1)
-
-                                        sns.stripplot(data=df, x="index", ax=axes[0])
-                                        sns.violinplot(data=df, x="index", ax=axes[0])
-                                        axes[0].get_yaxis().label.set_visible(False)
-                                        axes[0].set_xlabel("inter sequence index")
-
                                         sns.barplot(
-                                            data=df, x="index", y="name", ax=axes[1]
+                                            x="count",
+                                            y="class",
+                                            data=df,
+                                            hue="type",
+                                            ax=axes[0],
                                         )
-                                        axes[1].get_yaxis().label.set_visible(False)
+                                        sns.barplot(
+                                            x="count",
+                                            y="type",
+                                            data=df,
+                                            ax=axes[1],
+                                            estimator=sum,
+                                            ci=None,
+                                        )
 
-                                        axes[1].set_xlabel("inter sequence index")
-                                        axes[1].get_yaxis().label.set_visible(False)
-
-                                        plt.tight_layout()
                                         figure.savefig(
-                                            dir_cache_2(
+                                            dir_cache_1(
                                                 name="{name}.png".format(name=name)
                                             ),
                                             dpi=200,
@@ -3236,506 +3183,595 @@ class Pipeline(object):
                                         figure.clf()
                                         plt.close()
 
-                                        log(
-                                            "{baseName} stats, {name} figure saved".format(
-                                                name=name,
-                                                baseName=dir_cache_2.path_name,
+                                fig_pool.apply_async(thread_fn_1)
+
+                            with dir.enter(name="sequences") as dir2:
+                                with dir2.enter(name="per_sequence") as dir3:
+                                    dir_cache_2 = dir3
+
+                                    def thread_fn_2():
+                                        df = self.sequences_data_frame
+
+                                        if generate_csvs:
+                                            df.to_csv(
+                                                path_or_buf=dir_cache_2(
+                                                    name="{name}.csv.bz2".format(
+                                                        name=dir_cache_2.path_name
+                                                    )
+                                                ),
+                                                index=False,
                                             )
+
+                                        process_sequence_stats(
+                                            df=df[df.pair & (df.total == False)],
+                                            dir=dir_cache_2,
+                                            name="invalid_pairs",
+                                        )
+                                        process_sequence_stats(
+                                            df=df[df.pair & df.total],
+                                            dir=dir_cache_2,
+                                            name="total_invalid_pairs",
+                                        )
+                                        process_sequence_stats(
+                                            df=df[
+                                                (df.statistic == "restriction sites")
+                                                & (df.total == False)
+                                            ],
+                                            dir=dir_cache_2,
+                                            name="restriction_sites",
                                         )
 
-                                fig_pool.apply_async(thread_fn_2)
+                                        name = "inter_sequence_indexes"
+                                        df = self.inter_sequence_indexes
 
-                            with dir2.enter(name="valid_pairs") as dir3:
-                                dir_cache_3 = dir3
+                                        if generate_csvs:
+                                            df.to_csv(
+                                                path_or_buf=dir_cache_2(
+                                                    name="{name}.csv.bz2".format(
+                                                        name=name
+                                                    )
+                                                ),
+                                                index=False,
+                                            )
 
-                                def thread_fn_3():
-                                    df = self.valid_pairs_data_frame
+                                        if generate_figs:
+                                            figure, axes = plt.subplots(2, 1)
 
-                                    if generate_csvs:
-                                        df.to_csv(
-                                            path_or_buf=dir_cache_3(
-                                                name="{name}.csv.bz2".format(
-                                                    name=dir_cache_3.path_name
+                                            sns.stripplot(
+                                                data=df, x="index", ax=axes[0]
+                                            )
+                                            sns.violinplot(
+                                                data=df, x="index", ax=axes[0]
+                                            )
+                                            axes[0].get_yaxis().label.set_visible(False)
+                                            axes[0].set_xlabel("inter sequence index")
+
+                                            sns.barplot(
+                                                data=df, x="index", y="name", ax=axes[1]
+                                            )
+                                            axes[1].get_yaxis().label.set_visible(False)
+
+                                            axes[1].set_xlabel("inter sequence index")
+                                            axes[1].get_yaxis().label.set_visible(False)
+
+                                            plt.tight_layout()
+                                            figure.savefig(
+                                                dir_cache_2(
+                                                    name="{name}.png".format(name=name)
+                                                ),
+                                                dpi=200,
+                                                bbox_inches="tight",
+                                            )
+                                            figure.clf()
+                                            plt.close()
+
+                                            log(
+                                                "{baseName} stats, {name} figure saved".format(
+                                                    name=name,
+                                                    baseName=dir_cache_2.path_name,
                                                 )
-                                            ),
-                                            index=False,
-                                        )
-
-                                    process_valid_pairs_per_sequence(
-                                        df=df[df.norm == 0],
-                                        dir=dir_cache_3,
-                                        name="valid_pairs_raw_counts",
-                                    )
-                                    process_valid_pairs_per_sequence(
-                                        df=df[df.norm == 1],
-                                        dir=dir_cache_3,
-                                        name="valid_pairs_norm_counts",
-                                    )
-                                    process_valid_pairs_per_sequence(
-                                        df=df[df.norm == 0],
-                                        dir=dir_cache_3,
-                                        name="total_valid_pairs_raw_count",
-                                        totals=True,
-                                    )
-                                    process_valid_pairs_per_sequence(
-                                        df=df[df.norm == 1],
-                                        dir=dir_cache_3,
-                                        name="total_valid_pairs_norm_counts",
-                                        totals=True,
-                                    )
-
-                                fig_pool.apply_async(thread_fn_3)
-
-                        with dir.enter(name="restriction_sites") as dir2:
-                            df = self.restrictionSiteDistances.data_frame
-
-                            df_cache_4 = df
-                            dir_cache_4 = dir2
-
-                            def thread_fn_4():
-                                if generate_csvs:
-                                    df_cache_4.to_csv(
-                                        path_or_buf=dir_cache_4(
-                                            name="{name}.csv.bz2".format(
-                                                name=dir_cache_4.path_name
                                             )
-                                        ),
-                                        index=False,
-                                    )
 
-                            pool.apply_async(thread_fn_4)
+                                    fig_pool.apply_async(thread_fn_2)
 
-                            if generate_figs:
                                 with dir2.enter(name="valid_pairs") as dir3:
-                                    dir_cache_5 = dir3
+                                    dir_cache_3 = dir3
 
-                                    def thread_fn_5():
-                                        process_site_distance_plots(
-                                            df=df_cache_4[df_cache_4.valid],
-                                            dir=dir_cache_5,
-                                            name=dir_cache_4.path_name,
-                                            fr_classes=("fr", "rf"),
-                                            other_classes=("ff", "rr"),
-                                        )
+                                    def thread_fn_3():
+                                        df = self.valid_pairs_data_frame
 
-                                    fig_pool.apply_async(thread_fn_5)
-
-                            if generate_figs:
-                                with dir2.enter(name="invalid_pairs") as dir3:
-                                    dir_cache_6 = dir3
-
-                                    def thread_fn_6():
-                                        process_site_distance_plots(
-                                            df=df_cache_4[df_cache_4.valid == False],
-                                            dir=dir_cache_6,
-                                            name=dir_cache_4.path_name,
-                                            fr_classes=("sc", "de"),
-                                            other_classes=("sfs", "rl"),
-                                        )
-
-                                    fig_pool.apply_async(thread_fn_6)
-
-                        with dir.enter(name="intra_sequence_pair_separations") as dir2:
-                            df = self.intraSeqReadDistances.data_frame
-
-                            df_cache_7 = df
-                            dir_cache_7 = dir2
-
-                            def thread_fn_7():
-                                if generate_csvs:
-                                    df_cache_7.to_csv(
-                                        path_or_buf=dir_cache_7(
-                                            name="{name}.csv.bz2".format(
-                                                name=dir_cache_7.path_name
+                                        if generate_csvs:
+                                            df.to_csv(
+                                                path_or_buf=dir_cache_3(
+                                                    name="{name}.csv.bz2".format(
+                                                        name=dir_cache_3.path_name
+                                                    )
+                                                ),
+                                                index=False,
                                             )
-                                        ),
-                                        index=False,
-                                    )
 
-                            pool.apply_async(thread_fn_7)
+                                        process_valid_pairs_per_sequence(
+                                            df=df[df.norm == 0],
+                                            dir=dir_cache_3,
+                                            name="valid_pairs_raw_counts",
+                                        )
+                                        process_valid_pairs_per_sequence(
+                                            df=df[df.norm == 1],
+                                            dir=dir_cache_3,
+                                            name="valid_pairs_norm_counts",
+                                        )
+                                        process_valid_pairs_per_sequence(
+                                            df=df[df.norm == 0],
+                                            dir=dir_cache_3,
+                                            name="total_valid_pairs_raw_count",
+                                            totals=True,
+                                        )
+                                        process_valid_pairs_per_sequence(
+                                            df=df[df.norm == 1],
+                                            dir=dir_cache_3,
+                                            name="total_valid_pairs_norm_counts",
+                                            totals=True,
+                                        )
 
-                            (
-                                df_fits,
-                                df_f_tests,
-                            ) = (
-                                self.intraSeqReadDistances.calculate_histograms_and_fit_models()
-                            )
-                            with dir2.enter(name="histograms_plus_models") as dir3:
+                                    fig_pool.apply_async(thread_fn_3)
 
-                                df_cache_8 = df_fits
-                                dir_cache_8 = dir3
+                            with dir.enter(name="restriction_sites") as dir2:
+                                df = self.restrictionSiteDistances.data_frame
 
-                                def thread_fn_8():
-                                    df = df_cache_8
+                                df_cache_4 = df
+                                dir_cache_4 = dir2
 
+                                def thread_fn_4():
                                     if generate_csvs:
-                                        df.to_csv(
-                                            path_or_buf=dir_cache_8(
+                                        df_cache_4.to_csv(
+                                            path_or_buf=dir_cache_4(
                                                 name="{name}.csv.bz2".format(
-                                                    name=dir_cache_8.path_name
+                                                    name=dir_cache_4.path_name
                                                 )
                                             ),
                                             index=False,
                                         )
 
-                                    if generate_figs:
-                                        plot = sns.relplot(
-                                            x="sep",
-                                            y="prob",
-                                            kind="line",
-                                            data=df[
-                                                (df["class"] == "all")
-                                                & (df["type"] == "histogram")
-                                            ],
-                                        )
-                                        plot.set(xscale="log", yscale="log")
-                                        for ax in plot.fig.axes:
-                                            ax.set_xlabel("pair separation, bp")
-                                            ax.set_ylabel("probability")
+                                pool.apply_async(thread_fn_4)
 
-                                        plt.tight_layout()
-                                        plot.fig.savefig(
-                                            dir_cache_8(
-                                                name="{name}.png".format(
-                                                    name="pair_separation"
-                                                )
-                                            ),
-                                            dpi=200,
-                                            bbox_inches="tight",
-                                        )
-                                        plt.close()
+                                if generate_figs:
+                                    with dir2.enter(name="valid_pairs") as dir3:
+                                        dir_cache_5 = dir3
 
-                                        plot = sns.relplot(
-                                            x="sep",
-                                            y="prob",
-                                            kind="line",
-                                            data=df[
-                                                (df["class"] != "all")
-                                                & (df["type"] == "histogram")
-                                            ],
-                                            hue="class",
-                                        )
-                                        plot.set(xscale="log", yscale="log")
-                                        for ax in plot.fig.axes:
-                                            ax.set_xlabel("pair separation, bp")
-                                            ax.set_ylabel("probability")
-
-                                        plt.tight_layout()
-                                        plot.fig.savefig(
-                                            dir_cache_8(
-                                                name="{name}.png".format(
-                                                    name="pair_separation_by_type"
-                                                )
-                                            ),
-                                            dpi=200,
-                                            bbox_inches="tight",
-                                        )
-                                        plt.close()
-
-                                        plot = sns.relplot(
-                                            x="sep",
-                                            y="prob",
-                                            kind="line",
-                                            data=df[df["class"] != "all"],
-                                            hue="type",
-                                            legend="full",
-                                            col="class",
-                                            col_wrap=2,
-                                            col_order=["ff", "fr", "rf", "rr"],
-                                        )
-                                        plot.set(xscale="log", yscale="log")
-                                        for ax in plot.fig.axes:
-                                            ax.set_xlabel("pair separation, bp")
-                                            ax.set_ylabel("probability")
-
-                                        plt.tight_layout()
-                                        plot.fig.savefig(
-                                            dir_cache_8(
-                                                name="{name}.png".format(
-                                                    name="model_fits_by_pair_type"
-                                                )
-                                            ),
-                                            dpi=200,
-                                            bbox_inches="tight",
-                                        )
-                                        plt.close()
-
-                                        plot = sns.relplot(
-                                            x="sep",
-                                            y="prob",
-                                            kind="line",
-                                            data=df[df["class"] == "all"],
-                                            hue="type",
-                                            legend="full",
-                                        )
-                                        plot.set(xscale="log", yscale="log")
-                                        for ax in plot.fig.axes:
-                                            ax.set_xlabel("pair separation, bp")
-                                            ax.set_ylabel("probability")
-
-                                        plt.tight_layout()
-                                        plot.fig.savefig(
-                                            dir_cache_8(
-                                                name="{name}.png".format(
-                                                    name="model_fits"
-                                                )
-                                            ),
-                                            dpi=200,
-                                            bbox_inches="tight",
-                                        )
-                                        plt.close()
-
-                                    log(
-                                        "{name} stats saved".format(
-                                            name=dir_cache_8.path_name
-                                        )
-                                    )
-
-                                fig_pool.apply_async(thread_fn_8)
-
-                            with dir2.enter(name="model_F_tests") as dir3:
-
-                                dir_cache_9 = dir3
-                                df_cache_9 = df_f_tests
-
-                                def thread_fn_9():
-                                    df = df_cache_9
-
-                                    if generate_csvs:
-                                        df.to_csv(
-                                            path_or_buf=dir_cache_9(
-                                                name="{name}.csv.bz2".format(
-                                                    name="model_F_tests"
-                                                )
-                                            ),
-                                            index=False,
-                                        )
-
-                                    process_model_f_tests(
-                                        df=df,
-                                        dir=dir_cache_9,
-                                        name="F_tests_by_pair_type",
-                                        all=False,
-                                    )
-                                    process_model_f_tests(
-                                        df=df, dir=dir_cache_9, name="F_tests", all=True
-                                    )
-
-                                    log(
-                                        "{name} stats saved".format(
-                                            name=dir_cache_9.path_name
-                                        )
-                                    )
-
-                                fig_pool.apply_async(thread_fn_9)
-
-                        with dir.enter(
-                            name="intra_sequence_fragment_separations"
-                        ) as dir2:
-                            df = self.intraSeqFragmentDistances.data_frame
-
-                            df_cache_10 = df
-                            dir_cache_10 = dir2
-
-                            def thread_fn_10():
-                                if generate_csvs:
-                                    df_cache_10.to_csv(
-                                        path_or_buf=dir_cache_10(
-                                            name="{name}.csv.bz2".format(
-                                                name=dir_cache_10.path_name
+                                        def thread_fn_5():
+                                            process_site_distance_plots(
+                                                df=df_cache_4[df_cache_4.valid],
+                                                dir=dir_cache_5,
+                                                name=dir_cache_4.path_name,
+                                                fr_classes=("fr", "rf"),
+                                                other_classes=("ff", "rr"),
                                             )
-                                        ),
-                                        index=False,
-                                    )
 
-                            pool.apply_async(thread_fn_10)
+                                        fig_pool.apply_async(thread_fn_5)
 
-                            (
-                                df_fits2,
-                                df_f_tests2,
-                            ) = (
-                                self.intraSeqFragmentDistances.calculate_histograms_and_fit_models()
-                            )
-                            with dir2.enter(name="histograms_plus_models") as dir3:
+                                if generate_figs:
+                                    with dir2.enter(name="invalid_pairs") as dir3:
+                                        dir_cache_6 = dir3
 
-                                df_cache_11 = df_fits2
-                                dir_cache_11 = dir3
+                                        def thread_fn_6():
+                                            process_site_distance_plots(
+                                                df=df_cache_4[
+                                                    df_cache_4.valid == False
+                                                ],
+                                                dir=dir_cache_6,
+                                                name=dir_cache_4.path_name,
+                                                fr_classes=("sc", "de"),
+                                                other_classes=("sfs", "rl"),
+                                            )
 
-                                def thread_fn_11():
-                                    df = df_cache_11
+                                        fig_pool.apply_async(thread_fn_6)
 
+                            with dir.enter(
+                                name="intra_sequence_pair_separations"
+                            ) as dir2:
+                                df = self.intraSeqReadDistances.data_frame
+
+                                df_cache_7 = df
+                                dir_cache_7 = dir2
+
+                                def thread_fn_7():
                                     if generate_csvs:
-                                        df.to_csv(
-                                            path_or_buf=dir_cache_11(
+                                        df_cache_7.to_csv(
+                                            path_or_buf=dir_cache_7(
                                                 name="{name}.csv.bz2".format(
-                                                    name=dir_cache_11.path_name
+                                                    name=dir_cache_7.path_name
                                                 )
                                             ),
                                             index=False,
                                         )
 
-                                    if generate_figs:
-                                        plot = sns.relplot(
-                                            x="sep",
-                                            y="prob",
-                                            kind="line",
-                                            data=df[
-                                                (df["class"] == "all")
-                                                & (df["type"] == "histogram")
-                                            ],
+                                pool.apply_async(thread_fn_7)
+
+                                (
+                                    df_fits,
+                                    df_f_tests,
+                                ) = (
+                                    self.intraSeqReadDistances.calculate_histograms_and_fit_models()
+                                )
+                                with dir2.enter(name="histograms_plus_models") as dir3:
+
+                                    df_cache_8 = df_fits
+                                    dir_cache_8 = dir3
+
+                                    def thread_fn_8():
+                                        df = df_cache_8
+
+                                        if generate_csvs:
+                                            df.to_csv(
+                                                path_or_buf=dir_cache_8(
+                                                    name="{name}.csv.bz2".format(
+                                                        name=dir_cache_8.path_name
+                                                    )
+                                                ),
+                                                index=False,
+                                            )
+
+                                        if generate_figs:
+                                            plot = sns.relplot(
+                                                x="sep",
+                                                y="prob",
+                                                kind="line",
+                                                data=df[
+                                                    (df["class"] == "all")
+                                                    & (df["type"] == "histogram")
+                                                ],
+                                            )
+                                            plot.set(xscale="log", yscale="log")
+                                            for ax in plot.fig.axes:
+                                                ax.set_xlabel("pair separation, bp")
+                                                ax.set_ylabel("probability")
+
+                                            plt.tight_layout()
+                                            plot.fig.savefig(
+                                                dir_cache_8(
+                                                    name="{name}.png".format(
+                                                        name="pair_separation"
+                                                    )
+                                                ),
+                                                dpi=200,
+                                                bbox_inches="tight",
+                                            )
+                                            plt.close()
+
+                                            plot = sns.relplot(
+                                                x="sep",
+                                                y="prob",
+                                                kind="line",
+                                                data=df[
+                                                    (df["class"] != "all")
+                                                    & (df["type"] == "histogram")
+                                                ],
+                                                hue="class",
+                                            )
+                                            plot.set(xscale="log", yscale="log")
+                                            for ax in plot.fig.axes:
+                                                ax.set_xlabel("pair separation, bp")
+                                                ax.set_ylabel("probability")
+
+                                            plt.tight_layout()
+                                            plot.fig.savefig(
+                                                dir_cache_8(
+                                                    name="{name}.png".format(
+                                                        name="pair_separation_by_type"
+                                                    )
+                                                ),
+                                                dpi=200,
+                                                bbox_inches="tight",
+                                            )
+                                            plt.close()
+
+                                            plot = sns.relplot(
+                                                x="sep",
+                                                y="prob",
+                                                kind="line",
+                                                data=df[df["class"] != "all"],
+                                                hue="type",
+                                                legend="full",
+                                                col="class",
+                                                col_wrap=2,
+                                                col_order=["ff", "fr", "rf", "rr"],
+                                            )
+                                            plot.set(xscale="log", yscale="log")
+                                            for ax in plot.fig.axes:
+                                                ax.set_xlabel("pair separation, bp")
+                                                ax.set_ylabel("probability")
+
+                                            plt.tight_layout()
+                                            plot.fig.savefig(
+                                                dir_cache_8(
+                                                    name="{name}.png".format(
+                                                        name="model_fits_by_pair_type"
+                                                    )
+                                                ),
+                                                dpi=200,
+                                                bbox_inches="tight",
+                                            )
+                                            plt.close()
+
+                                            plot = sns.relplot(
+                                                x="sep",
+                                                y="prob",
+                                                kind="line",
+                                                data=df[df["class"] == "all"],
+                                                hue="type",
+                                                legend="full",
+                                            )
+                                            plot.set(xscale="log", yscale="log")
+                                            for ax in plot.fig.axes:
+                                                ax.set_xlabel("pair separation, bp")
+                                                ax.set_ylabel("probability")
+
+                                            plt.tight_layout()
+                                            plot.fig.savefig(
+                                                dir_cache_8(
+                                                    name="{name}.png".format(
+                                                        name="model_fits"
+                                                    )
+                                                ),
+                                                dpi=200,
+                                                bbox_inches="tight",
+                                            )
+                                            plt.close()
+
+                                        log(
+                                            "{name} stats saved".format(
+                                                name=dir_cache_8.path_name
+                                            )
                                         )
-                                        plot.set(xscale="log", yscale="log")
-                                        for ax in plot.fig.axes:
-                                            ax.set_xlabel("fragment separation, bp")
-                                            ax.set_ylabel("probability")
 
-                                        plt.tight_layout()
-                                        plot.fig.savefig(
-                                            dir_cache_11(
-                                                name="{name}.png".format(
-                                                    name="pair_separation"
-                                                )
-                                            ),
-                                            dpi=200,
-                                            bbox_inches="tight",
+                                    fig_pool.apply_async(thread_fn_8)
+
+                                with dir2.enter(name="model_F_tests") as dir3:
+
+                                    dir_cache_9 = dir3
+                                    df_cache_9 = df_f_tests
+
+                                    def thread_fn_9():
+                                        df = df_cache_9
+
+                                        if generate_csvs:
+                                            df.to_csv(
+                                                path_or_buf=dir_cache_9(
+                                                    name="{name}.csv.bz2".format(
+                                                        name="model_F_tests"
+                                                    )
+                                                ),
+                                                index=False,
+                                            )
+
+                                        process_model_f_tests(
+                                            df=df,
+                                            dir=dir_cache_9,
+                                            name="F_tests_by_pair_type",
+                                            all=False,
                                         )
-                                        plt.close()
-
-                                        plot = sns.relplot(
-                                            x="sep",
-                                            y="prob",
-                                            kind="line",
-                                            data=df[
-                                                (df["class"] != "all")
-                                                & (df["type"] == "histogram")
-                                            ],
-                                            hue="class",
+                                        process_model_f_tests(
+                                            df=df,
+                                            dir=dir_cache_9,
+                                            name="F_tests",
+                                            all=True,
                                         )
-                                        plot.set(xscale="log", yscale="log")
-                                        for ax in plot.fig.axes:
-                                            ax.set_xlabel("fragment separation, bp")
-                                            ax.set_ylabel("probability")
 
-                                        plt.tight_layout()
-                                        plot.fig.savefig(
-                                            dir_cache_11(
-                                                name="{name}.png".format(
-                                                    name="pair_separation_by_type"
-                                                )
-                                            ),
-                                            dpi=200,
-                                            bbox_inches="tight",
+                                        log(
+                                            "{name} stats saved".format(
+                                                name=dir_cache_9.path_name
+                                            )
                                         )
-                                        plt.close()
 
-                                        plot = sns.relplot(
-                                            x="sep",
-                                            y="prob",
-                                            kind="line",
-                                            data=df[df["class"] != "all"],
-                                            hue="type",
-                                            legend="full",
-                                            col="class",
-                                            col_wrap=2,
-                                            col_order=["ff", "fr", "rf", "rr"],
-                                        )
-                                        plot.set(xscale="log", yscale="log")
-                                        for ax in plot.fig.axes:
-                                            ax.set_xlabel("fragment separation, bp")
-                                            ax.set_ylabel("probability")
+                                    fig_pool.apply_async(thread_fn_9)
 
-                                        plt.tight_layout()
-                                        plot.fig.savefig(
-                                            dir_cache_11(
-                                                name="{name}.png".format(
-                                                    name="model_fits_by_pair_type"
-                                                )
-                                            ),
-                                            dpi=200,
-                                            bbox_inches="tight",
-                                        )
-                                        plt.close()
+                            with dir.enter(
+                                name="intra_sequence_fragment_separations"
+                            ) as dir2:
+                                df = self.intraSeqFragmentDistances.data_frame
 
-                                        plot = sns.relplot(
-                                            x="sep",
-                                            y="prob",
-                                            kind="line",
-                                            data=df[df["class"] == "all"],
-                                            hue="type",
-                                            legend="full",
-                                        )
-                                        plot.set(xscale="log", yscale="log")
-                                        for ax in plot.fig.axes:
-                                            ax.set_xlabel("fragment separation, bp")
-                                            ax.set_ylabel("probability")
+                                df_cache_10 = df
+                                dir_cache_10 = dir2
 
-                                        plt.tight_layout()
-                                        plot.fig.savefig(
-                                            dir_cache_11(
-                                                name="{name}.png".format(
-                                                    name="model_fits"
-                                                )
-                                            ),
-                                            dpi=200,
-                                            bbox_inches="tight",
-                                        )
-                                        plt.close()
-
-                                    log(
-                                        "{name} stats saved".format(
-                                            name=dir_cache_11.path_name
-                                        )
-                                    )
-
-                                fig_pool.apply_async(thread_fn_11)
-
-                            with dir2.enter(name="model_F_tests") as dir3:
-
-                                dir_cache_12 = dir3
-                                df_cache_12 = df_f_tests2
-
-                                def thread_fn_12():
-                                    df = df_cache_12
-
+                                def thread_fn_10():
                                     if generate_csvs:
-                                        df.to_csv(
-                                            path_or_buf=dir_cache_12(
+                                        df_cache_10.to_csv(
+                                            path_or_buf=dir_cache_10(
                                                 name="{name}.csv.bz2".format(
-                                                    name="model_F_tests"
+                                                    name=dir_cache_10.path_name
                                                 )
                                             ),
                                             index=False,
                                         )
 
-                                    process_model_f_tests(
-                                        df=df,
-                                        dir=dir_cache_12,
-                                        name="F_tests_by_pair_type",
-                                        all=False,
-                                    )
-                                    process_model_f_tests(
-                                        df=df,
-                                        dir=dir_cache_12,
-                                        name="F_tests",
-                                        all=True,
-                                    )
+                                pool.apply_async(thread_fn_10)
 
-                                    log(
-                                        "{name} stats saved".format(
-                                            name=dir_cache_12.path_name
+                                (
+                                    df_fits2,
+                                    df_f_tests2,
+                                ) = (
+                                    self.intraSeqFragmentDistances.calculate_histograms_and_fit_models()
+                                )
+                                with dir2.enter(name="histograms_plus_models") as dir3:
+
+                                    df_cache_11 = df_fits2
+                                    dir_cache_11 = dir3
+
+                                    def thread_fn_11():
+                                        df = df_cache_11
+
+                                        if generate_csvs:
+                                            df.to_csv(
+                                                path_or_buf=dir_cache_11(
+                                                    name="{name}.csv.bz2".format(
+                                                        name=dir_cache_11.path_name
+                                                    )
+                                                ),
+                                                index=False,
+                                            )
+
+                                        if generate_figs:
+                                            plot = sns.relplot(
+                                                x="sep",
+                                                y="prob",
+                                                kind="line",
+                                                data=df[
+                                                    (df["class"] == "all")
+                                                    & (df["type"] == "histogram")
+                                                ],
+                                            )
+                                            plot.set(xscale="log", yscale="log")
+                                            for ax in plot.fig.axes:
+                                                ax.set_xlabel("fragment separation, bp")
+                                                ax.set_ylabel("probability")
+
+                                            plt.tight_layout()
+                                            plot.fig.savefig(
+                                                dir_cache_11(
+                                                    name="{name}.png".format(
+                                                        name="pair_separation"
+                                                    )
+                                                ),
+                                                dpi=200,
+                                                bbox_inches="tight",
+                                            )
+                                            plt.close()
+
+                                            plot = sns.relplot(
+                                                x="sep",
+                                                y="prob",
+                                                kind="line",
+                                                data=df[
+                                                    (df["class"] != "all")
+                                                    & (df["type"] == "histogram")
+                                                ],
+                                                hue="class",
+                                            )
+                                            plot.set(xscale="log", yscale="log")
+                                            for ax in plot.fig.axes:
+                                                ax.set_xlabel("fragment separation, bp")
+                                                ax.set_ylabel("probability")
+
+                                            plt.tight_layout()
+                                            plot.fig.savefig(
+                                                dir_cache_11(
+                                                    name="{name}.png".format(
+                                                        name="pair_separation_by_type"
+                                                    )
+                                                ),
+                                                dpi=200,
+                                                bbox_inches="tight",
+                                            )
+                                            plt.close()
+
+                                            plot = sns.relplot(
+                                                x="sep",
+                                                y="prob",
+                                                kind="line",
+                                                data=df[df["class"] != "all"],
+                                                hue="type",
+                                                legend="full",
+                                                col="class",
+                                                col_wrap=2,
+                                                col_order=["ff", "fr", "rf", "rr"],
+                                            )
+                                            plot.set(xscale="log", yscale="log")
+                                            for ax in plot.fig.axes:
+                                                ax.set_xlabel("fragment separation, bp")
+                                                ax.set_ylabel("probability")
+
+                                            plt.tight_layout()
+                                            plot.fig.savefig(
+                                                dir_cache_11(
+                                                    name="{name}.png".format(
+                                                        name="model_fits_by_pair_type"
+                                                    )
+                                                ),
+                                                dpi=200,
+                                                bbox_inches="tight",
+                                            )
+                                            plt.close()
+
+                                            plot = sns.relplot(
+                                                x="sep",
+                                                y="prob",
+                                                kind="line",
+                                                data=df[df["class"] == "all"],
+                                                hue="type",
+                                                legend="full",
+                                            )
+                                            plot.set(xscale="log", yscale="log")
+                                            for ax in plot.fig.axes:
+                                                ax.set_xlabel("fragment separation, bp")
+                                                ax.set_ylabel("probability")
+
+                                            plt.tight_layout()
+                                            plot.fig.savefig(
+                                                dir_cache_11(
+                                                    name="{name}.png".format(
+                                                        name="model_fits"
+                                                    )
+                                                ),
+                                                dpi=200,
+                                                bbox_inches="tight",
+                                            )
+                                            plt.close()
+
+                                        log(
+                                            "{name} stats saved".format(
+                                                name=dir_cache_11.path_name
+                                            )
                                         )
-                                    )
 
-                                fig_pool.apply_async(thread_fn_12)
+                                    fig_pool.apply_async(thread_fn_11)
 
-                    fig_pool.close()
-                    fig_pool.join()
-                    pool.close()
-                    pool.join()
+                                with dir2.enter(name="model_F_tests") as dir3:
 
-            except Exception as ex:
-                self.logger.error("Error saving stats: {msg}".format(msg=ex))
-                raise ex
+                                    dir_cache_12 = dir3
+                                    df_cache_12 = df_f_tests2
+
+                                    def thread_fn_12():
+                                        df = df_cache_12
+
+                                        if generate_csvs:
+                                            df.to_csv(
+                                                path_or_buf=dir_cache_12(
+                                                    name="{name}.csv.bz2".format(
+                                                        name="model_F_tests"
+                                                    )
+                                                ),
+                                                index=False,
+                                            )
+
+                                        process_model_f_tests(
+                                            df=df,
+                                            dir=dir_cache_12,
+                                            name="F_tests_by_pair_type",
+                                            all=False,
+                                        )
+                                        process_model_f_tests(
+                                            df=df,
+                                            dir=dir_cache_12,
+                                            name="F_tests",
+                                            all=True,
+                                        )
+
+                                        log(
+                                            "{name} stats saved".format(
+                                                name=dir_cache_12.path_name
+                                            )
+                                        )
+
+                                    fig_pool.apply_async(thread_fn_12)
+
+                        fig_pool.close()
+                        fig_pool.join()
+                        pool.close()
+                        pool.join()
+
+                except Exception as ex:
+                    self.logger.error("Error saving stats: {msg}".format(msg=ex))
+                    raise ex
 
     class SamReader(object):
         """Class for reading in an existing / external SAM alignment."""
@@ -4001,6 +4037,18 @@ def cli():
     logger.addHandler(
         create_logger_handle(stream=sys.stderr, typeid="error", level=logging.ERROR)
     )
+    logger.addHandler(
+        create_logger_handle(stream=sys.stderr, typeid="warning", level=logging.WARNING)
+    )
+
+    def _showwarning(message, category, filename, lineno, file=None, line=None):
+        logger.warning(
+            f"[{filename} {lineno}] {message}"
+            if line is None
+            else f"[{filename} {lineno}] {message} {line}"
+        )
+
+    warnings.showwarning = _showwarning
 
 
 def processor(f):

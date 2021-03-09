@@ -25,6 +25,7 @@ import hashlib
 import re
 import gzip
 import os
+import warnings
 from os import makedirs
 from os.path import isdir, isfile, join, basename, normpath, realpath, dirname
 from subprocess import Popen, PIPE, STDOUT, check_output
