@@ -1,0 +1,52 @@
+name: test
+
+on: [push, pull_request]
+
+jobs:
+  build:
+
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        submodules: 'recursive'
+
+    - name: setup_conda
+      run: |
+        if [ `uname` == Darwin ]; then
+          export conda_url=https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
+          export toolchain=clangxx_osx-64
+          export bwa=bwa
+        else
+          export conda_url=https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh
+          export toolchain=gxx_linux-64
+          export bwa=bwa-mem2
+        fi
+        
+        wget $conda_url -O miniconda.sh
+        bash miniconda.sh -b -p $HOME/miniconda
+        source "$HOME/miniconda/etc/profile.d/conda.sh"
+        hash -r
+        conda config --set always_yes yes --set changeps1 no
+        conda update -q conda
+        conda info -a
+        conda install -c conda-forge mamba
+        
+        mamba create -q -n test-environment -c conda-forge -c bioconda -y python clang $toolchain pip numpy samtools $bwa ninja cmake boost pcre pkgconfig pytest ragel
+       
+    - name: pip_install
+      run: |
+        source "$HOME/miniconda/etc/profile.d/conda.sh"
+        hash -r
+        conda activate test-environment
+        pip install .
+
+    - name: pytest
+      run: |
+        source "$HOME/miniconda/etc/profile.d/conda.sh"
+        hash -r
+        conda activate test-environment
+        pytest -vv
