@@ -1,4 +1,4 @@
-[![Travis CI](https://travis-ci.org/wtsi-hpag/HiLine.svg?branch=master)](https://travis-ci.org/github/wtsi-hpag/HiLine)
+[![test](https://github.com/wtsi-hpag/HiLine/actions/workflows/test.yml/badge.svg)](https://github.com/wtsi-hpag/HiLine/actions/workflows/test.yml)
 [![Anaconda-Server Badge](https://anaconda.org/bioconda/hiline/badges/installer/conda.svg)](https://conda.anaconda.org/bioconda)
 [![Anaconda-Server Badge](https://anaconda.org/bioconda/hiline/badges/downloads.svg)](https://anaconda.org/bioconda/hiline)
 # HiLine
