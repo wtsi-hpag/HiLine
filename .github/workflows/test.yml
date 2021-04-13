@@ -35,7 +35,7 @@ jobs:
         conda info -a
         conda install -c conda-forge mamba
         
-        mamba create -q -n test-environment -c conda-forge -c bioconda -y python clang $toolchain pip numpy samtools $bwa ninja cmake boost pcre pkgconfig pytest ragel
+        mamba create -q -n test-environment -c conda-forge -c bioconda -y python clang $toolchain pip numpy samtools $bwa ninja cmake boost pcre pkgconfig ragel
        
     - name: pip_install
       run: |
@@ -44,9 +44,10 @@ jobs:
         conda activate test-environment
         pip install .
 
-    - name: pytest
+    - name: test
       run: |
         source "$HOME/miniconda/etc/profile.d/conda.sh"
         hash -r
         conda activate test-environment
-        pytest -vv
+        HiLine --help
+        python -c 'import HiLine'
