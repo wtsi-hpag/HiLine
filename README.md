@@ -47,12 +47,12 @@ help(Pipeline)
     * [Ragel](http://www.colm.net/open-source/ragel/)
     * [PCRE](https://www.pcre.org/)
     * [pkg-config](https://www.freedesktop.org/wiki/Software/pkg-config/)
-* [pytest](https://docs.pytest.org/en/latest/) (for testing only)
 
 ```bash
 cd HiLine
 pip install .
-pytest
+HiLine --help
+python -c 'import HiLine'
 ```
 
 # Notes
