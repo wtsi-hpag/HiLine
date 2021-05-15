@@ -4152,9 +4152,16 @@ def read_sam(pipeline, sam, rmdups):
     default=True,
     help="Run HiC read trimming, trim sections of reads that align past restriction sites. Default=trim",
 )
-@click.option("--bwa1", "version", flag_value=1, help="Use bwa mem. Default=False")
 @click.option(
-    "--bwa2", "version", flag_value=2, default=True, help="Use bwa-mem2. Default=True"
+    "--bwa1", "version", flag_value=1, help="Use bwa mem. Default=False", type=int
+)
+@click.option(
+    "--bwa2",
+    "version",
+    flag_value=2,
+    default=True,
+    help="Use bwa-mem2. Default=True",
+    type=int,
 )
 @click.option(
     "--minimap2",
@@ -4162,6 +4169,7 @@ def read_sam(pipeline, sam, rmdups):
     flag_value=3,
     default=False,
     help="Use minimap2. Default=False",
+    type=int,
 )
 @processor
 @documenter(
@@ -4191,9 +4199,16 @@ def align_one_read(pipeline, reads, rmdups, trim, version):
     default=True,
     help="Run HiC read trimming, trim sections of reads that align past restriction sites. Default=trim",
 )
-@click.option("--bwa1", "version", flag_value=1, help="Use bwa mem. Default=False")
 @click.option(
-    "--bwa2", "version", flag_value=2, default=True, help="Use bwa-mem2. Default=True"
+    "--bwa1", "version", flag_value=1, help="Use bwa mem. Default=False", type=int
+)
+@click.option(
+    "--bwa2",
+    "version",
+    flag_value=2,
+    default=True,
+    help="Use bwa-mem2. Default=True",
+    type=int,
 )
 @click.option(
     "--minimap2",
@@ -4201,6 +4216,7 @@ def align_one_read(pipeline, reads, rmdups, trim, version):
     flag_value=3,
     default=False,
     help="Use minimap2. Default=False",
+    type=int,
 )
 @processor
 @documenter(
@@ -4231,9 +4247,16 @@ def align_two_reads(pipeline, reads, rmdups, trim, version):
     default=True,
     help="Run HiC read trimming, trim sections of reads that align past restriction sites. Default=trim",
 )
-@click.option("--bwa1", "version", flag_value=1, help="Use bwa mem. Default=False")
 @click.option(
-    "--bwa2", "version", flag_value=2, default=True, help="Use bwa-mem2. Default=True"
+    "--bwa1", "version", flag_value=1, help="Use bwa mem. Default=False", type=int
+)
+@click.option(
+    "--bwa2",
+    "version",
+    flag_value=2,
+    default=True,
+    help="Use bwa-mem2. Default=True",
+    type=int,
 )
 @click.option(
     "--minimap2",
@@ -4241,6 +4264,7 @@ def align_two_reads(pipeline, reads, rmdups, trim, version):
     flag_value=3,
     default=False,
     help="Use minimap2. Default=False",
+    type=int,
 )
 @processor
 @documenter(
@@ -4268,9 +4292,16 @@ def align_sam_reads(pipeline, reads, rmdups, tag, trim, version):
     default=True,
     help="Run HiC read trimming, trim sections of reads that align past restriction sites. Default=trim",
 )
-@click.option("--bwa1", "version", flag_value=1, help="Use bwa mem. Default=False")
 @click.option(
-    "--bwa2", "version", flag_value=2, default=True, help="Use bwa-mem2. Default=True"
+    "--bwa1", "version", flag_value=1, help="Use bwa mem. Default=False", type=int
+)
+@click.option(
+    "--bwa2",
+    "version",
+    flag_value=2,
+    default=True,
+    help="Use bwa-mem2. Default=True",
+    type=int,
 )
 @click.option(
     "--minimap2",
@@ -4278,6 +4309,7 @@ def align_sam_reads(pipeline, reads, rmdups, tag, trim, version):
     flag_value=3,
     default=False,
     help="Use minimap2. Default=False",
+    type=int,
 )
 @processor
 @documenter(
