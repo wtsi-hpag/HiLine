@@ -148,8 +148,9 @@ def cli(reference, reads, site, threads, tag, trim, aligner, align):
 
     warnings.showwarning = _showwarning
 
-    if len(site) == 0:
-        raise click.BadOptionUsage("site", "must specify at least one 'site'")
+    if len(site) == 0 and trim:
+        logger.warning("No restriction sites specified, turning off trimming")
+        trim = False
 
     if not (3 > len(reads) > 0):
         raise click.BadArgumentUsage("only one or two read sources accepted")

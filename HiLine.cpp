@@ -347,14 +347,19 @@ void
 CreateTree_Thread(void *in)
 {
 	create_tree_data *data = (create_tree_data *)in;
-	ForLoop(data->numValueLists)
+
+	if (data->sequence->tree)
 	{
-		TraverseLinkedList(data->values[index], line_buffer_value)
+		ForLoop(data->numValueLists)
 		{
-			WavlTreeInsertValue(data->arena, data->sequence->tree, node->value);
+			TraverseLinkedList(data->values[index], line_buffer_value)
+			{
+				WavlTreeInsertValue(data->arena, data->sequence->tree, node->value);
+			}
 		}
+		
+		WavlTreeFreeze(data->sequence->tree);
 	}
-	WavlTreeFreeze(data->sequence->tree);
 }
 
 struct sam_buffer;
@@ -958,8 +963,11 @@ ProcessPairs(sam_buffer *buffer)
 						read2 = tmp;
 					}
 					pairSeparation = read2->readStart - read1->readStart;
-					if (read1->fragment->next) fragmentSeparation = read2->fragment->value - read1->fragment->next->value;
-
+					if (read1->fragment)
+					{
+						if (read1->fragment->next) fragmentSeparation = read2->fragment->value - read1->fragment->next->value;
+					}
+					else fragmentSeparation = pairSeparation;
 					// This preserves original pair-order
 					/*{
 					  read1 = originalRead1;
@@ -967,7 +975,7 @@ ProcessPairs(sam_buffer *buffer)
 					  }*/
 				}
 
-				if (read1->fragment == read2->fragment)
+				if (read1->fragment && (read1->fragment == read2->fragment))
 				{
 					if (read1->isReverse && !read2->isReverse)
 					{
@@ -997,7 +1005,7 @@ ProcessPairs(sam_buffer *buffer)
 						__atomic_add_fetch(Stats->sameFragmentAndStrandPairSequenceVector + read1->sequence->index, 1, 0);
 					}
 				}
-				else if (read1->fragment->next == read2->fragment)
+				else if (read1->fragment && (read1->fragment->next == read2->fragment))
 				{
 					__atomic_add_fetch(&Stats->reLigated, 1, 0);
 					read1->type = typeReLigated;
@@ -1275,11 +1283,11 @@ ProcessSamRecord(void *in)
 				u32 isReverse = flags & 0x10;
 
 				u64 readStart = isReverse ? refStart + (u64)referenceDelta - 1 : refStart;
-				wavl_node *fragment = WavlTreeFindInterval(buffer->sequence->tree, readStart);
+				wavl_node *fragment = buffer->sequence->tree ? WavlTreeFindInterval(buffer->sequence->tree, readStart) : 0;
 
-				u32 distanceFromRestrictionSite = (u32)(readStart - fragment->value);
+				u32 distanceFromRestrictionSite = fragment ? (u32)(readStart - fragment->value) : 0;
 				u32 closerToNextFragment = 0;
-				if (fragment->next)
+				if (fragment && fragment->next)
 				{
 					u32 nextDis = (u32)(fragment->next->value - readStart);
 					if (nextDis < distanceFromRestrictionSite)
@@ -1638,7 +1646,7 @@ HiLine_Main(PyObject *self, PyObject *args, PyObject *kwargs)
 
 									sequence *newSequence = PushStruct(Working_Set, sequence);
 									newSequence->name = newName;
-									newSequence->tree = InitialiseWavlTree(&Working_Set);
+									newSequence->tree = (Restriction_Sites->num > 2) ? InitialiseWavlTree(&Working_Set) : 0;
 									newSequence->next = 0;
 									newSequence->index = numSequences++;
 
@@ -1715,7 +1723,8 @@ HiLine_Main(PyObject *self, PyObject *args, PyObject *kwargs)
 									buffer->startCoord = startCoord;
 									startCoord += (u64)(bufferPtr - overlap);
 									buffer->name = currName;
-									ThreadPoolAddTask(Thread_Pool, ScanForRestrictionSite, buffer);
+									if (Restriction_Sites->num > 2) ThreadPoolAddTask(Thread_Pool, ScanForRestrictionSite, buffer);
+									else AddLineBufferToQueue(Line_Buffer_Queue, buffer);
 								}
 
 								continue;
@@ -1745,7 +1754,8 @@ HiLine_Main(PyObject *self, PyObject *args, PyObject *kwargs)
 									overlapBuffer[index] = buffer->line[bufferPtr - overlap + index];
 								}
 
-								ThreadPoolAddTask(Thread_Pool, ScanForRestrictionSite, buffer);
+								if (Restriction_Sites->num > 2) ThreadPoolAddTask(Thread_Pool, ScanForRestrictionSite, buffer);
+								else AddLineBufferToQueue(Line_Buffer_Queue, buffer);
 
 								startCoord += (u64)(bufferPtr - overlap);
 								bufferPtr = 0;
@@ -1761,7 +1771,8 @@ HiLine_Main(PyObject *self, PyObject *args, PyObject *kwargs)
 						startCoord += (u64)(bufferPtr - overlap);
 						buffer->name = currName;
 
-						ThreadPoolAddTask(Thread_Pool, ScanForRestrictionSite, buffer);
+						if (Restriction_Sites->num > 2) ThreadPoolAddTask(Thread_Pool, ScanForRestrictionSite, buffer);
+						else AddLineBufferToQueue(Line_Buffer_Queue, buffer);
 					}
 
 					{
@@ -1813,37 +1824,40 @@ EndFastaRead:
 					u64 treeId = 0;
 					TraverseLinkedList(sequences, sequence)
 					{
-						totalRestrictionSites += (node->tree->numIntervals - 1);
-
-						for (	wavl_node *fragment = WavlTreeFindInterval(node->tree, 0);
-								fragment;
-								fragment = fragment->next )
+						if (node->tree)
 						{
+							totalRestrictionSites += (node->tree->numIntervals - 1);
 
-							char tagBuffer[256];
-							u32 tagLength = 0;
-
-							tagBuffer[tagLength++] = 'r';
-							tagBuffer[tagLength++] = 'f';
-							tagBuffer[tagLength++] = ':';
-							tagBuffer[tagLength++] = 'B';
-							tagBuffer[tagLength++] = ':';
-							tagBuffer[tagLength++] = 'I';
-							tagBuffer[tagLength++] = ',';
-
-							tagLength += (u32)stbsp_snprintf(((char *)tagBuffer) + tagLength, sizeof(tagBuffer) - tagLength - 1, "%u", (u32)(treeId++ & 0xffffffff));
-							tagBuffer[tagLength++] = ',';
-							tagLength += (u32)stbsp_snprintf(((char *)tagBuffer) + tagLength, sizeof(tagBuffer) - tagLength - 1, "%u", (u32)(fragment->value & 0xffffffff));
-							tagBuffer[tagLength++] = ',';
-							u64 upstreamFragmentDistance = fragment->next ? fragment->next->value : node->length;
-							tagLength += (u32)stbsp_snprintf(((char *)tagBuffer) + tagLength, sizeof(tagBuffer) - tagLength - 1, "%u", (u32)(upstreamFragmentDistance & 0xffffffff));
-
-							fragment->tag = PushArray(Working_Set, u08, tagLength);
-							ForLoop(tagLength)
+							for (	wavl_node *fragment = WavlTreeFindInterval(node->tree, 0);
+									fragment;
+									fragment = fragment->next )
 							{
-								fragment->tag[index] = tagBuffer[index];
+
+								char tagBuffer[256];
+								u32 tagLength = 0;
+
+								tagBuffer[tagLength++] = 'r';
+								tagBuffer[tagLength++] = 'f';
+								tagBuffer[tagLength++] = ':';
+								tagBuffer[tagLength++] = 'B';
+								tagBuffer[tagLength++] = ':';
+								tagBuffer[tagLength++] = 'I';
+								tagBuffer[tagLength++] = ',';
+
+								tagLength += (u32)stbsp_snprintf(((char *)tagBuffer) + tagLength, sizeof(tagBuffer) - tagLength - 1, "%u", (u32)(treeId++ & 0xffffffff));
+								tagBuffer[tagLength++] = ',';
+								tagLength += (u32)stbsp_snprintf(((char *)tagBuffer) + tagLength, sizeof(tagBuffer) - tagLength - 1, "%u", (u32)(fragment->value & 0xffffffff));
+								tagBuffer[tagLength++] = ',';
+								u64 upstreamFragmentDistance = fragment->next ? fragment->next->value : node->length;
+								tagLength += (u32)stbsp_snprintf(((char *)tagBuffer) + tagLength, sizeof(tagBuffer) - tagLength - 1, "%u", (u32)(upstreamFragmentDistance & 0xffffffff));
+
+								fragment->tag = PushArray(Working_Set, u08, tagLength);
+								ForLoop(tagLength)
+								{
+									fragment->tag[index] = tagBuffer[index];
+								}
+								fragment->tagLength = tagLength;
 							}
-							fragment->tagLength = tagLength;
 						}
 					}
 
@@ -2101,7 +2115,7 @@ EndSamRead:
 								u64 *out = (u64 *)((u08 *)PyArray_DATA(seqLengths) + (index * PyArray_STRIDE(seqLengths, 0)));
 								*out = node->length;
 								out = (u64 *)((u08 *)PyArray_DATA(restrictionSitesPerSeq) + (index++ * PyArray_STRIDE(restrictionSitesPerSeq, 0)));
-								*out = node->tree->numIntervals - 1;
+								*out = node->tree ? (node->tree->numIntervals - 1) : 0;
 							}
 						}
 

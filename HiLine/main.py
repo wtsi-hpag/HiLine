@@ -25,6 +25,7 @@ import sys
 import warnings
 from binascii import hexlify
 from functools import update_wrapper
+from importlib.metadata import version as get_version
 from os import makedirs
 from os.path import isfile, join, basename, normpath
 from subprocess import Popen, PIPE, CalledProcessError, check_output, STDOUT
@@ -37,8 +38,8 @@ import pandas as pd
 from Bio.Restriction import AllEnzymes, RestrictionBatch
 from _HiLine import _HiLine_Main
 
-NAME = "HiLine"
-VERSION = "0.2.3"
+NAME = __name__.split(".")[0]
+VERSION = get_version(NAME)
 DESCRIPTION = "A HiC alignment and classification pipeline."
 LICENCE = "Copyright (c) 2020 Ed Harry, Wellcome Sanger Institute."
 
@@ -650,24 +651,27 @@ class Pipeline(object):
         Restriction site(s) specification string, a comma-separated list of restriction site definitions.
         /^<restriction>(, <restriction>)*$/
 
-        where <restriction> is either: the name of a HiC kit provider, the name of a restriction enzyme, or the string-definition of the restriction site.
+        where <restriction> is either: the name of a HiC kit provider, the name of a restriction enzyme, "DNASE", or the string-definition of the restriction site.
         <restriction> = /(<kit>|<enzyme>|<site>)/
 
         <kit> is the name of a HiC kit provider, currently supported are:
+            Dovetail Genomics OMNI-C: "Omni-C"
             Arima Genomics version 2: "Arima_v2"
             Arima Genomics: "Arima"
             Dovetail Genomics: "Dovetail"
             Phase Genomics: "Phase"
             Qiagen: "Qiagen"
-        <kit> = /((Arima_v2)|(Arima)|(Dovetail)|(Phase)|(Qiagen))/, note: names are case-insensitive.
+        <kit> = /((Omni-C)|(Arima_v2)|(Arima)|(Dovetail)|(Phase)|(Qiagen))/, note: names are case-insensitive.
 
-        <enzyme> is the name of a restriction enzyme e.g. "DpnII", currently all known enzymes defined in the 'Biopython.Restriction' package are supported.
+        <enzyme> is the name of a restriction enzyme (e.g. "DpnII"), or "DNASE", currently all known enzymes defined in the 'Biopython.Restriction' package are supported.
         Note: enzyme names are case-sensitive.
 
         <site> is the IUPAC string definition of a restriction site e.g. "^GATC".
         <site> = /([ACGTWSMKRYBDHVN]*\^[ACGTWSMKRYBDHVN]*_?[ACGTWSMKRYBDHVN]*)/
         A caret character "^" is required to appear once and only once, and defines the cut location.
         If the site is not palindromic, an underscore character "_" is required to appear once and only once, and defines the cut location on the reverse strand. Otherwise it is not required.
+
+        Note: if "Omni-C" or "DNASE" are selected, no fragment-aware alignment trimming, fragment statistical analysis or fragment info SAM tags can be computed.
         """
         return self._restrictionSites
 
@@ -922,6 +926,9 @@ class Pipeline(object):
             restriction_sites = self.RestrictionSites(logger=self.logger).create_sites(
                 self.restriction_sites
             )
+            
+            if len(restriction_sites) == 0:
+                self.sam_input.trim = False;
 
             self._loggerHandle = self.LoggerHandle(logger=self.logger)
             if not isinstance(self.sam_input, self.IndexOnly):
@@ -1032,7 +1039,7 @@ class Pipeline(object):
                         )
 
                     match = re.search(
-                        r"_HiLine_Aligner (?P<version>(\d\.)+\d)\.",
+                        r"_HiLine_Aligner (?P<version>(\d\.)+\d(\.dev\d+)?)\.",
                         output,
                     )
 
@@ -1551,6 +1558,7 @@ class Pipeline(object):
             # https://www.biorxiv.org/content/10.1101/659623v1.full.pdf,
             # https://www.qiagen.com/jp/resources/download.aspx?id=813c3f19-b24e-426e-9fc6-23f48defd828&lang=en
             all_enz = {
+                "OMNI-C": ("Dovetail Genomics Omni-C", ("DNASE",)),
                 "ARIMA_V2": ("Arima Genomics version 2", ("Arima", "DdeI", "MseI")),
                 "ARIMA": ("Arima Genomics", ("HinfI", "DpnII")),
                 "DOVETAIL": ("Dovetail Genomics", ("DpnII",)),
@@ -1743,6 +1751,10 @@ class Pipeline(object):
                         "'{comp}' enzyme mix: {mix}".format(comp=enz[0], mix=enz[1])
                     )
                     sites += list(self.create_sites(string=",".join(enz[1])))
+
+                elif st.upper() == "DNASE" or st.upper() == "<NA>":
+                    pass
+                
                 else:
                     raise self.Exception(
                         "Unknown enzyme or company '{enz}'".format(enz=st)
@@ -3970,6 +3982,7 @@ def documenter(docstring):
 
 
 @click.group(chain=True)
+@click.version_option()
 @documenter(
     """{name} version {ver}. {des}
     {licence}
@@ -4091,25 +4104,28 @@ REFERENCE:
 RESTRICTION_SITES:
     Restriction site(s) specification string, a comma-separated list of restriction site definitions.
     /^<restriction>(, <restriction>)*$/
-    
-    where <restriction> is either: the name of a HiC kit provider, the name of a restriction enzyme, or the string-definition of the restriction site.
+
+    where <restriction> is either: the name of a HiC kit provider, the name of a restriction enzyme, "DNASE", or the string-definition of the restriction site.
     <restriction> = /(<kit>|<enzyme>|<site>)/
-    
+
     <kit> is the name of a HiC kit provider, currently supported are:
+        Dovetail Genomics OMNI-C: "Omni-C"
         Arima Genomics version 2: "Arima_v2"
         Arima Genomics: "Arima"
         Dovetail Genomics: "Dovetail"
         Phase Genomics: "Phase"
         Qiagen: "Qiagen"
-    <kit> = /((Arima_v2)|(Arima)|(Dovetail)|(Phase)|(Qiagen))/, note: names are case-insensitive.
-    
-    <enzyme> is the name of a restriction enzyme e.g. "DpnII", currently all known enzymes defined in the 'Biopython.Restriction' package are supported.
+    <kit> = /((Omni-C)|(Arima_v2)|(Arima)|(Dovetail)|(Phase)|(Qiagen))/, note: names are case-insensitive.
+
+    <enzyme> is the name of a restriction enzyme (e.g. "DpnII"), or "DNASE", currently all known enzymes defined in the 'Biopython.Restriction' package are supported.
     Note: enzyme names are case-sensitive.
-    
+
     <site> is the IUPAC string definition of a restriction site e.g. "^GATC".
     <site> = /([ACGTWSMKRYBDHVN]*\^[ACGTWSMKRYBDHVN]*_?[ACGTWSMKRYBDHVN]*)/
     A caret character "^" is required to appear once and only once, and defines the cut location.
     If the site is not palindromic, an underscore character "_" is required to appear once and only once, and defines the cut location on the reverse strand. Otherwise it is not required.
+
+    Note: if "Omni-C" or "DNASE" are selected, no fragment-aware alignment trimming, fragment statistical analysis or fragment info SAM tags can be computed.
 """
 )
 def params(pipeline, reference, restriction_sites, threads, minmapq):
